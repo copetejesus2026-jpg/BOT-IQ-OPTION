@@ -6,13 +6,7 @@ import numpy as np
 import sys
 import logging
 
-# ================= FIX IQ =================
-try:
-    from iqoptionapi.stable_api import IQ_Option
-except ImportError:
-    print("❌ iqoptionapi no está instalado")
-    time.sleep(60)
-    exit()
+from iqoptionapi.stable_api import IQ_Option
 
 # ================= CONFIG =================
 
@@ -26,7 +20,8 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 TIMEFRAME = 60
 EXPIRATION = 1
-BASE_AMOUNT = 2000
+BASE_AMOUNT = 10000  # 🔥 baja riesgo
+
 MAX_LOSS_STREAK = 3
 
 PAIRS = [
@@ -37,18 +32,16 @@ PAIRS = [
     "AUDCAD-OTC"
 ]
 
-# ================= VALIDACIONES =================
+# ================= ESTADO =================
 
-if not EMAIL or not PASSWORD:
-    print("❌ Faltan credenciales IQ Option")
-    time.sleep(60)
-    exit()
+trade_open = False
+last_trade_time = 0
+last_trade_candle = None
+loss_streak = 0
 
 # ================= TELEGRAM =================
 
 def send(msg):
-    if not TOKEN or not CHAT_ID:
-        return
     try:
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
@@ -58,38 +51,19 @@ def send(msg):
     except:
         pass
 
-# ================= CONEXIÓN IQ (MEJORADA) =================
+# ================= IQ =================
 
-def connect_iq():
-    while True:
-        try:
-            print("🔌 Conectando a IQ Option...")
+iq = IQ_Option(EMAIL, PASSWORD)
+iq.connect()
 
-            iq = IQ_Option(EMAIL, PASSWORD)
-            status, reason = iq.connect()
+if not iq.check_connect():
+    print("❌ Error conectando")
+    exit()
 
-            if status:
-                print("✅ Conectado a IQ Option")
-                send("✅ Conectado a IQ Option")
-                iq.change_balance("PRACTICE")
-                return iq
+iq.change_balance("PRACTICE")
 
-            else:
-                print("❌ Error conexión:", reason)
-                send(f"❌ Error IQ: {reason}")
-
-        except Exception as e:
-            print("❌ Excepción:", e)
-
-        print("🔁 Reintentando en 10 segundos...")
-        time.sleep(10)
-
-# ================= INICIAR =================
-
-iq = connect_iq()
-
-print("🔥 BOT ACTIVO")
-send("🔥 BOT ACTIVO")
+print("🔥 BOT PRO ACTIVO")
+send("🔥 BOT PRO ACTIVO")
 
 # ================= INDICADORES =================
 
@@ -97,15 +71,11 @@ def indicators(df):
     df["ema20"] = df["close"].ewm(span=20).mean()
     df["ema50"] = df["close"].ewm(span=50).mean()
 
-    df["tr"] = np.maximum(
-        df["high"] - df["low"],
-        np.maximum(
-            abs(df["high"] - df["close"].shift()),
-            abs(df["low"] - df["close"].shift())
-        )
-    )
-
+    df["tr"] = np.maximum(df["high"] - df["low"],
+                np.maximum(abs(df["high"] - df["close"].shift()),
+                           abs(df["low"] - df["close"].shift())))
     df["atr"] = df["tr"].rolling(14).mean()
+
     return df
 
 # ================= DATOS =================
@@ -115,70 +85,64 @@ def get_candles(pair, tf):
         data = iq.get_candles(pair, tf, 100, time.time())
         df = pd.DataFrame(data)
 
-        if df.empty:
-            return None
-
         df.rename(columns={"max": "high", "min": "low"}, inplace=True)
         return indicators(df)
 
     except:
         return None
 
-# ================= ESTRATEGIA =================
+# ================= SNIPER PRO =================
 
 def sniper_pro(df_m1, df_m5):
-    try:
-        last = df_m1.iloc[-1]
-        prev = df_m1.iloc[-2]
 
-        trend_up = df_m5.iloc[-1]["ema20"] > df_m5.iloc[-1]["ema50"]
-        trend_down = df_m5.iloc[-1]["ema20"] < df_m5.iloc[-1]["ema50"]
+    last = df_m1.iloc[-1]
+    prev = df_m1.iloc[-2]
 
-        if last["atr"] < df_m1["atr"].mean():
-            return None
+    # 🔥 tendencia M5 (filtro fuerte)
+    trend_up = df_m5.iloc[-1]["ema20"] > df_m5.iloc[-1]["ema50"]
+    trend_down = df_m5.iloc[-1]["ema20"] < df_m5.iloc[-1]["ema50"]
 
-        body = abs(last["close"] - last["open"])
-        range_ = last["high"] - last["low"]
-
-        if range_ == 0:
-            return None
-
-        strength = body / range_
-
-        if (
-            prev["close"] > prev["open"] and
-            last["close"] < last["open"] and
-            strength > 0.7 and
-            last["close"] < prev["low"] and
-            trend_down
-        ):
-            return "put"
-
-        if (
-            prev["close"] < prev["open"] and
-            last["close"] > last["open"] and
-            strength > 0.7 and
-            last["close"] > prev["high"] and
-            trend_up
-        ):
-            return "call"
-
+    # 🔥 evitar lateral
+    if last["atr"] < df_m1["atr"].mean():
         return None
 
-    except:
+    body = abs(last["close"] - last["open"])
+    range_ = last["high"] - last["low"]
+
+    if range_ == 0:
         return None
+
+    strength = body / range_
+
+    # ================= PUT =================
+    if (
+        prev["close"] > prev["open"] and
+        last["close"] < last["open"] and
+        strength > 0.7 and
+        last["close"] < prev["low"] and
+        trend_down
+    ):
+        return "put"
+
+    # ================= CALL =================
+    if (
+        prev["close"] < prev["open"] and
+        last["close"] > last["open"] and
+        strength > 0.7 and
+        last["close"] > prev["high"] and
+        trend_up
+    ):
+        return "call"
+
+    return None
 
 # ================= TRADE =================
-
-trade_open = False
-last_trade_time = 0
-last_trade_candle = None
 
 def trade(pair, direction):
     global trade_open, last_trade_time
 
     try:
-        status, _ = iq.buy(BASE_AMOUNT, pair, direction, EXPIRATION)
+        status, trade_id = iq.buy(BASE_AMOUNT, pair, direction, EXPIRATION)
 
         if status:
             trade_open = True
@@ -188,13 +152,13 @@ def trade(pair, direction):
             print(msg)
             send(msg)
 
-    except Exception as e:
-        print("Error trade:", e)
+    except:
+        pass
 
 # ================= RESULTADO =================
 
 def check_result():
-    global trade_open
+    global trade_open, loss_streak
 
     try:
         if not trade_open:
@@ -202,6 +166,9 @@ def check_result():
 
         if time.time() - last_trade_time < 65:
             return
+
+        # simulación básica (puedes mejorar con API)
+        result = iq.get_balance()
 
         trade_open = False
 
@@ -236,6 +203,14 @@ while True:
             signal = sniper_pro(df_m1, df_m5)
 
             if signal:
+
+                # 🔥 protección pérdidas
+                if loss_streak >= MAX_LOSS_STREAK:
+                    send("🛑 STOP POR RACHAS")
+                    time.sleep(120)
+                    loss_streak = 0
+                    break
+
                 trade(pair, signal)
                 last_trade_candle = current_candle
                 break
@@ -243,5 +218,5 @@ while True:
         time.sleep(1)
 
     except Exception as e:
-        print("Error loop:", e)
-        time.sleep(2)
+        print("Error:", e)
+        time.sleep(1)
