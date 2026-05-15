@@ -68,13 +68,13 @@ send("🔥 BOT PRO ACTIVO")
 # ================= INDICADORES =================
 
 def indicators(df):
-    df["ema20"] = df["close"].ewm(span=20).mean()
-    df["ema50"] = df["close"].ewm(span=50).mean()
+    df["ema20"] = df["close"].ewm(span=22).mean()
+    df["ema50"] = df["close"].ewm(span=52).mean()
 
     df["tr"] = np.maximum(df["high"] - df["low"],
                 np.maximum(abs(df["high"] - df["close"].shift()),
                            abs(df["low"] - df["close"].shift())))
-    df["atr"] = df["tr"].rolling(14).mean()
+    df["atr"] = df["tr"].rolling(16).mean()
 
     return df
 
@@ -99,8 +99,8 @@ def sniper_pro(df_m1, df_m5):
     prev = df_m1.iloc[-2]
 
     # 🔥 tendencia M5 (filtro fuerte)
-    trend_up = df_m5.iloc[-1]["ema20"] > df_m5.iloc[-1]["ema50"]
-    trend_down = df_m5.iloc[-1]["ema20"] < df_m5.iloc[-1]["ema50"]
+    trend_up = df_m5.iloc[-1]["ema22"] > df_m5.iloc[-1]["ema50"]
+    trend_down = df_m5.iloc[-1]["ema22"] < df_m5.iloc[-1]["ema50"]
 
     # 🔥 evitar lateral
     if last["atr"] < df_m1["atr"].mean():
@@ -118,7 +118,7 @@ def sniper_pro(df_m1, df_m5):
     if (
         prev["close"] > prev["open"] and
         last["close"] < last["open"] and
-        strength > 0.7 and
+        strength > 0.8 and
         last["close"] < prev["low"] and
         trend_down
     ):
@@ -128,7 +128,7 @@ def sniper_pro(df_m1, df_m5):
     if (
         prev["close"] < prev["open"] and
         last["close"] > last["open"] and
-        strength > 0.7 and
+        strength > 0.8 and
         last["close"] > prev["high"] and
         trend_up
     ):
