@@ -95,8 +95,8 @@ def get_candles(pair, tf):
 
 def sniper_pro(df_m1, df_m5):
 
-    last = df_m1.iloc[-2]
-    prev = df_m1.iloc[-3]
+    last = df_m1.iloc[-1]
+    prev = df_m1.iloc[-1]
 
     # 🔥 tendencia M5 (filtro fuerte)
     trend_up = df_m5.iloc[-1]["ema20"] > df_m5.iloc[-1]["ema50"]
