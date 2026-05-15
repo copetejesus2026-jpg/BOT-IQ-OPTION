@@ -20,8 +20,7 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 TIMEFRAME = 60
 EXPIRATION = 1
-BASE_AMOUNT = 20000  # 🔥 baja riesgo
-
+BASE_AMOUNT = 2000
 MAX_LOSS_STREAK = 3
 
 PAIRS = [
@@ -31,6 +30,15 @@ PAIRS = [
     "USDCHF-OTC",
     "AUDCAD-OTC"
 ]
+
+# ================= VALIDACIÓN =================
+
+if not EMAIL or not PASSWORD:
+    print("❌ Faltan credenciales IQ Option")
+    exit()
+
+if not TOKEN or not CHAT_ID:
+    print("⚠️ Telegram no configurado")
 
 # ================= ESTADO =================
 
@@ -42,6 +50,9 @@ loss_streak = 0
 # ================= TELEGRAM =================
 
 def send(msg):
+    if not TOKEN or not CHAT_ID:
+        return
+
     try:
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
@@ -57,7 +68,7 @@ iq = IQ_Option(EMAIL, PASSWORD)
 iq.connect()
 
 if not iq.check_connect():
-    print("❌ Error conectando")
+    print("❌ Error conectando a IQ Option")
     exit()
 
 iq.change_balance("PRACTICE")
@@ -71,9 +82,14 @@ def indicators(df):
     df["ema20"] = df["close"].ewm(span=20).mean()
     df["ema50"] = df["close"].ewm(span=50).mean()
 
-    df["tr"] = np.maximum(df["high"] - df["low"],
-                np.maximum(abs(df["high"] - df["close"].shift()),
-                           abs(df["low"] - df["close"].shift())))
+    df["tr"] = np.maximum(
+        df["high"] - df["low"],
+        np.maximum(
+            abs(df["high"] - df["close"].shift()),
+            abs(df["low"] - df["close"].shift())
+        )
+    )
+
     df["atr"] = df["tr"].rolling(14).mean()
 
     return df
@@ -85,24 +101,26 @@ def get_candles(pair, tf):
         data = iq.get_candles(pair, tf, 100, time.time())
         df = pd.DataFrame(data)
 
+        if df.empty:
+            return None
+
         df.rename(columns={"max": "high", "min": "low"}, inplace=True)
+
         return indicators(df)
 
-    except:
+    except Exception as e:
         return None
 
-# ================= SNIPER PRO =================
+# ================= SNIPER =================
 
 def sniper_pro(df_m1, df_m5):
 
     last = df_m1.iloc[-1]
     prev = df_m1.iloc[-2]
 
-    # 🔥 tendencia M5 (filtro fuerte)
     trend_up = df_m5.iloc[-1]["ema20"] > df_m5.iloc[-1]["ema50"]
     trend_down = df_m5.iloc[-1]["ema20"] < df_m5.iloc[-1]["ema50"]
 
-    # 🔥 evitar lateral
     if last["atr"] < df_m1["atr"].mean():
         return None
 
@@ -114,7 +132,6 @@ def sniper_pro(df_m1, df_m5):
 
     strength = body / range_
 
-    # ================= PUT =================
     if (
         prev["close"] > prev["open"] and
         last["close"] < last["open"] and
@@ -124,7 +141,6 @@ def sniper_pro(df_m1, df_m5):
     ):
         return "put"
 
-    # ================= CALL =================
     if (
         prev["close"] < prev["open"] and
         last["close"] > last["open"] and
@@ -152,13 +168,13 @@ def trade(pair, direction):
             print(msg)
             send(msg)
 
-    except:
-        pass
+    except Exception as e:
+        print("Error trade:", e)
 
 # ================= RESULTADO =================
 
 def check_result():
-    global trade_open, loss_streak
+    global trade_open
 
     try:
         if not trade_open:
@@ -166,9 +182,6 @@ def check_result():
 
         if time.time() - last_trade_time < 65:
             return
-
-        # simulación básica (puedes mejorar con API)
-        result = iq.get_balance()
 
         trade_open = False
 
@@ -204,11 +217,9 @@ while True:
 
             if signal:
 
-                # 🔥 protección pérdidas
                 if loss_streak >= MAX_LOSS_STREAK:
                     send("🛑 STOP POR RACHAS")
                     time.sleep(120)
-                    loss_streak = 0
                     break
 
                 trade(pair, signal)
@@ -219,4 +230,4 @@ while True:
 
     except Exception as e:
         print("Error:", e)
-        time.sleep(1)
+        time.sleep(2)
