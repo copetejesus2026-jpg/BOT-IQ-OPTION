@@ -26,7 +26,7 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 TIMEFRAME = 60
 EXPIRATION = 1   # 🔥 mejor para sniper
-BASE_AMOUNT = 10000
+BASE_AMOUNT = 3500
 
 PAIRS = [
      "EURUSD-OTC",
