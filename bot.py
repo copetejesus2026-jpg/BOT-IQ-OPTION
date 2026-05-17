@@ -10,7 +10,7 @@ import logging
 try:
     from iqoptionapi.stable_api import IQ_Option
 except ImportError:
-    print("❌ iqoptionapi no está instalado")
+    print("❌ iqoptionapi no instalado")
     time.sleep(60)
     exit()
 
@@ -25,8 +25,8 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 1
-BASE_AMOUNT = 3579
-MAX_TRADES_PER_CANDLE = 2   # 🔥 más precisión
+BASE_AMOUNT = 3500
+MAX_TRADES_PER_CANDLE = 2
 
 PAIRS = [
     "EURUSD-OTC","GBPUSD-OTC","AUDUSD-OTC","USDCAD-OTC","USDCHF-OTC",
@@ -59,7 +59,7 @@ def connect_iq():
 
             if status:
                 iq.change_balance("PRACTICE")
-                send("✅ Bot SMART conectado")
+                send("✅ Bot sin EMA conectado")
                 return iq
         except:
             pass
@@ -67,15 +67,12 @@ def connect_iq():
 
 iq = connect_iq()
 
-print("🔥 BOT SMART ACTIVO")
-send("🔥 BOT SMART ACTIVO")
+print("🔥 BOT PRICE ACTION ACTIVO")
+send("🔥 BOT PRICE ACTION ACTIVO")
 
 # ================= INDICADORES =================
 
 def indicators(df):
-    df["ema20"] = df["close"].ewm(span=20).mean()
-    df["ema50"] = df["close"].ewm(span=50).mean()
-
     # RSI
     delta = df["close"].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -99,56 +96,31 @@ def indicators(df):
 
 def get_data(pair):
     try:
-        m1 = iq.get_candles(pair, 60, 100, time.time())
-        m5 = iq.get_candles(pair, 300, 100, time.time())
+        data = iq.get_candles(pair, 60, 100, time.time())
+        df = pd.DataFrame(data)
 
-        df1 = pd.DataFrame(m1)
-        df5 = pd.DataFrame(m5)
-
-        if df1.empty or df5.empty:
-            return None, None
-
-        df1.rename(columns={"max": "high", "min": "low"}, inplace=True)
-        df5.rename(columns={"max": "high", "min": "low"}, inplace=True)
-
-        return indicators(df1), indicators(df5)
-    except:
-        return None, None
-
-# ================= FILTRO MERCADO =================
-
-def market_score(df1, df5):
-    try:
-        atr = df1["atr"].iloc[-1]
-        atr_avg = df1["atr"].mean()
-
-        ema_diff = abs(df5["ema20"].iloc[-1] - df5["ema50"].iloc[-1])
-
-        # score = volatilidad + tendencia
-        score = (atr / atr_avg) + (ema_diff * 10000)
-
-        return score
-    except:
-        return 0
-
-# ================= ESTRATEGIA =================
-
-def sniper(df1, df5):
-    try:
-        last = df1.iloc[-1]
-        prev = df1.iloc[-2]
-
-        trend_up = df5.iloc[-1]["ema20"] > df5.iloc[-1]["ema50"]
-        trend_down = df5.iloc[-1]["ema20"] < df5.iloc[-1]["ema50"]
-
-        # ❌ evitar mercado lateral
-        if abs(df5["ema20"].iloc[-1] - df5["ema50"].iloc[-1]) < 0.00005:
+        if df.empty:
             return None
+
+        df.rename(columns={"max": "high", "min": "low"}, inplace=True)
+
+        return indicators(df)
+    except:
+        return None
+
+# ================= ESTRATEGIA SIN EMA =================
+
+def price_action_signal(df):
+    try:
+        last = df.iloc[-1]
+        prev = df.iloc[-2]
+        prev2 = df.iloc[-3]
 
         # volatilidad
-        if last["atr"] < df1["atr"].mean():
+        if last["atr"] < df["atr"].mean():
             return None
 
+        # fuerza de vela
         body = abs(last["close"] - last["open"])
         range_ = last["high"] - last["low"]
 
@@ -160,19 +132,19 @@ def sniper(df1, df5):
         if strength < 0.6:
             return None
 
-        # CALL
+        # ================= CALL =================
         if (
-            trend_up and
-            last["rsi"] < 70 and
-            last["close"] > prev["high"]
+            last["close"] > prev["high"] and
+            prev["close"] > prev2["close"] and
+            last["rsi"] < 65
         ):
             return "call"
 
-        # PUT
+        # ================= PUT =================
         if (
-            trend_down and
-            last["rsi"] > 30 and
-            last["close"] < prev["low"]
+            last["close"] < prev["low"] and
+            prev["close"] < prev2["close"] and
+            last["rsi"] > 35
         ):
             return "put"
 
@@ -186,10 +158,12 @@ def sniper(df1, df5):
 def execute_trade(pair, direction):
     try:
         status, _ = iq.buy(BASE_AMOUNT, pair, direction, EXPIRATION)
+
         if status:
             msg = f"🎯 {pair} {direction.upper()}"
             print(msg)
             send(msg)
+
     except:
         pass
 
@@ -215,28 +189,16 @@ while True:
             continue
 
         last_candle = candle
-
-        ranked_pairs = []
-
-        # 🔥 evaluar mercado
-        for pair in PAIRS:
-            df1, df5 = get_data(pair)
-
-            if df1 is None:
-                continue
-
-            score = market_score(df1, df5)
-            ranked_pairs.append((pair, score, df1, df5))
-
-        # 🔥 elegir mejores pares
-        ranked_pairs.sort(key=lambda x: x[1], reverse=True)
-        best_pairs = ranked_pairs[:5]
-
         trades = 0
 
-        for pair, _, df1, df5 in best_pairs:
+        for pair in PAIRS:
 
-            signal = sniper(df1, df5)
+            df = get_data(pair)
+
+            if df is None:
+                continue
+
+            signal = price_action_signal(df)
 
             if signal:
                 execute_trade(pair, signal)
@@ -245,7 +207,7 @@ while True:
             if trades >= MAX_TRADES_PER_CANDLE:
                 break
 
-        print(f"🔥 Mejores pares analizados: {len(best_pairs)} | Trades: {trades}")
+        print(f"⏱ Trades ejecutados: {trades}")
 
     except Exception as e:
         print("Error:", e)
