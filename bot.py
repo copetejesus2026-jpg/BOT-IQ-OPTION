@@ -29,14 +29,25 @@ EXPIRATION = 1   # 🔥 mejor para sniper
 BASE_AMOUNT = 10000
 
 PAIRS = [
-    "EURUSD-OTC",
+     "EURUSD-OTC",
     "GBPUSD-OTC",
-    "USDZAR-OTC",
     "AUDUSD-OTC",
     "USDCAD-OTC",
     "USDCHF-OTC",
     "EURJPY-OTC",
-    "GBPJPY-OTC"
+    "GBPJPY-OTC",
+    "AUDJPY-OTC",
+    "CADJPY-OTC",
+    "CHFJPY-OTC",
+    "NZDJPY-OTC",
+    "EURAUD-OTC",
+    "EURGBP-OTC",
+    "EURCHF-OTC",
+    "GBPAUD-OTC",
+    "GBPCHF-OTC",
+    "AUDCAD-OTC",
+    "NZDCAD-OTC"
+
 ]
 
 # ================= TELEGRAM =================
