@@ -6,7 +6,7 @@ import numpy as np
 import sys
 import logging
 
-# ================= FIX IQ =================
+# ================= IQ =================
 try:
     from iqoptionapi.stable_api import IQ_Option
 except ImportError:
@@ -25,24 +25,19 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 TIMEFRAME = 60
-EXPIRATION = 3
-BASE_AMOUNT = 1000
-MAX_LOSS_STREAK = 3
+EXPIRATION = 1   # 🔥 mejor para sniper
+BASE_AMOUNT = 10000
 
 PAIRS = [
     "EURUSD-OTC",
     "GBPUSD-OTC",
-    "EURJPY-OTC",
+    "USDZAR-OTC",
+    "AUDUSD-OTC",
+    "USDCAD-OTC",
     "USDCHF-OTC",
-    "AUDCAD-OTC"
+    "EURJPY-OTC",
+    "GBPJPY-OTC"
 ]
-
-# ================= VALIDACIONES =================
-
-if not EMAIL or not PASSWORD:
-    print("❌ Faltan credenciales IQ Option")
-    time.sleep(60)
-    exit()
 
 # ================= TELEGRAM =================
 
@@ -58,38 +53,32 @@ def send(msg):
     except:
         pass
 
-# ================= CONEXIÓN IQ (MEJORADA) =================
+# ================= CONEXIÓN =================
 
 def connect_iq():
     while True:
         try:
-            print("🔌 Conectando a IQ Option...")
-
+            print("🔌 Conectando...")
             iq = IQ_Option(EMAIL, PASSWORD)
             status, reason = iq.connect()
 
             if status:
-                print("✅ Conectado a IQ Option")
-                send("✅ Conectado a IQ Option")
+                print("✅ Conectado")
+                send("✅ Bot conectado")
                 iq.change_balance("PRACTICE")
                 return iq
-
             else:
-                print("❌ Error conexión:", reason)
-                send(f"❌ Error IQ: {reason}")
+                print("❌", reason)
 
         except Exception as e:
-            print("❌ Excepción:", e)
+            print("❌ Error:", e)
 
-        print("🔁 Reintentando en 10 segundos...")
-        time.sleep(10)
-
-# ================= INICIAR =================
+        time.sleep(5)
 
 iq = connect_iq()
 
-print("🔥 BOT ACTIVO")
-send("🔥 BOT ACTIVO")
+print("🔥 BOT SNIPER ACTIVO")
+send("🔥 BOT SNIPER ACTIVO")
 
 # ================= INDICADORES =================
 
@@ -110,31 +99,36 @@ def indicators(df):
 
 # ================= DATOS =================
 
-def get_candles(pair, tf):
+def get_data(pair):
     try:
-        data = iq.get_candles(pair, tf, 100, time.time())
-        df = pd.DataFrame(data)
+        m1 = iq.get_candles(pair, 60, 100, time.time())
+        m5 = iq.get_candles(pair, 300, 100, time.time())
 
-        if df.empty:
-            return None
+        df1 = pd.DataFrame(m1)
+        df5 = pd.DataFrame(m5)
 
-        df.rename(columns={"max": "high", "min": "low"}, inplace=True)
-        return indicators(df)
+        if df1.empty or df5.empty:
+            return None, None
+
+        df1.rename(columns={"max": "high", "min": "low"}, inplace=True)
+        df5.rename(columns={"max": "high", "min": "low"}, inplace=True)
+
+        return indicators(df1), indicators(df5)
 
     except:
-        return None
+        return None, None
 
-# ================= ESTRATEGIA =================
+# ================= ESTRATEGIA SNIPER =================
 
-def sniper_pro(df_m1, df_m5):
+def sniper(df1, df5):
     try:
-        last = df_m1.iloc[-1]
-        prev = df_m1.iloc[-2]
+        last = df1.iloc[-1]
+        prev = df1.iloc[-2]
 
-        trend_up = df_m5.iloc[-1]["ema20"] > df_m5.iloc[-1]["ema50"]
-        trend_down = df_m5.iloc[-1]["ema20"] < df_m5.iloc[-1]["ema50"]
+        trend_up = df5.iloc[-1]["ema20"] > df5.iloc[-1]["ema50"]
+        trend_down = df5.iloc[-1]["ema20"] < df5.iloc[-1]["ema50"]
 
-        if last["atr"] < df_m1["atr"].mean():
+        if last["atr"] < df1["atr"].mean():
             return None
 
         body = abs(last["close"] - last["open"])
@@ -145,6 +139,7 @@ def sniper_pro(df_m1, df_m5):
 
         strength = body / range_
 
+        # 🔴 PUT
         if (
             prev["close"] > prev["open"] and
             last["close"] < last["open"] and
@@ -154,6 +149,7 @@ def sniper_pro(df_m1, df_m5):
         ):
             return "put"
 
+        # 🟢 CALL
         if (
             prev["close"] < prev["open"] and
             last["close"] > last["open"] and
@@ -170,20 +166,11 @@ def sniper_pro(df_m1, df_m5):
 
 # ================= TRADE =================
 
-trade_open = False
-last_trade_time = 0
-last_trade_candle = None
-
-def trade(pair, direction):
-    global trade_open, last_trade_time
-
+def execute_trade(pair, direction):
     try:
         status, _ = iq.buy(BASE_AMOUNT, pair, direction, EXPIRATION)
 
         if status:
-            trade_open = True
-            last_trade_time = time.time()
-
             msg = f"🎯 {pair} {direction.upper()}"
             print(msg)
             send(msg)
@@ -191,57 +178,50 @@ def trade(pair, direction):
     except Exception as e:
         print("Error trade:", e)
 
-# ================= RESULTADO =================
+# ================= ESPERAR APERTURA EXACTA =================
 
-def check_result():
-    global trade_open
+def wait_new_candle():
+    while True:
+        server_time = iq.get_server_timestamp()
+        if int(server_time) % 60 == 0:
+            break
+        time.sleep(0.2)
 
-    try:
-        if not trade_open:
-            return
+# ================= LOOP PRINCIPAL =================
 
-        if time.time() - last_trade_time < 65:
-            return
-
-        trade_open = False
-
-    except:
-        trade_open = False
-
-# ================= LOOP =================
+last_candle = None
 
 while True:
     try:
-        check_result()
+        wait_new_candle()
 
-        if trade_open:
-            time.sleep(1)
+        current_candle = int(iq.get_server_timestamp() // 60)
+
+        if current_candle == last_candle:
             continue
 
-        server_time = int(iq.get_server_timestamp())
-        current_candle = server_time // 60
+        last_candle = current_candle
 
-        if last_trade_candle == current_candle:
-            time.sleep(1)
-            continue
+        signals = []
 
+        # 🔥 ANALIZA TODOS LOS PARES RÁPIDO
         for pair in PAIRS:
+            df1, df5 = get_data(pair)
 
-            df_m1 = get_candles(pair, 60)
-            df_m5 = get_candles(pair, 300)
-
-            if df_m1 is None or df_m5 is None:
+            if df1 is None:
                 continue
 
-            signal = sniper_pro(df_m1, df_m5)
+            signal = sniper(df1, df5)
 
             if signal:
-                trade(pair, signal)
-                last_trade_candle = current_candle
-                break
+                signals.append((pair, signal))
 
-        time.sleep(1)
+        # 🔥 EJECUTA TODAS LAS SEÑALES (MULTIPAR)
+        for pair, signal in signals:
+            execute_trade(pair, signal)
+
+        print(f"⏱ Nueva vela | señales: {len(signals)}")
 
     except Exception as e:
-        print("Error loop:", e)
+        print("Error:", e)
         time.sleep(2)
