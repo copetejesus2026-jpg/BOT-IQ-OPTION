@@ -37,13 +37,15 @@ def get_signal(df1, df5):
         last = df1.iloc[-1]
         prev = df1.iloc[-2]
 
+        # filtro volatilidad
         if last["atr"] < df1["atr"].mean():
             return None
 
-        # Dirección M5
+        # tendencia M5
         trend_up = df5["close"].iloc[-1] > df5["close"].iloc[-3]
         trend_down = df5["close"].iloc[-1] < df5["close"].iloc[-3]
 
+        # fuerza vela
         body = abs(last["close"] - last["open"])
         range_ = last["high"] - last["low"]
 
@@ -55,13 +57,15 @@ def get_signal(df1, df5):
         if strength < 0.55:
             return None
 
-        # CALL
-        if last["close"] > prev["high"] and trend_up and last["rsi"] < 65:
-            return "call"
+        # ================= INVERTIDO =================
 
-        # PUT
-        if last["close"] < prev["low"] and trend_down and last["rsi"] > 35:
+        # ANTES ERA CALL → AHORA PUT
+        if last["close"] > prev["high"] and trend_up and last["rsi"] < 65:
             return "put"
+
+        # ANTES ERA PUT → AHORA CALL
+        if last["close"] < prev["low"] and trend_down and last["rsi"] > 35:
+            return "call"
 
         return None
 
