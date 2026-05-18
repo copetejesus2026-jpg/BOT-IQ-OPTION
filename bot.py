@@ -2,19 +2,12 @@ import time
 import os
 import requests
 import pandas as pd
-import numpy as np
 import sys
 import logging
 
-# ================= IQ =================
-try:
-    from iqoptionapi.stable_api import IQ_Option
-except ImportError:
-    print("❌ iqoptionapi no instalado")
-    time.sleep(60)
-    exit()
-
-# ================= CONFIG =================
+from iqoptionapi.stable_api import IQ_Option
+from strategy import get_signal, score_market
+from risk import RiskManager
 
 logging.getLogger().setLevel(logging.CRITICAL)
 sys.stderr = open(os.devnull, 'w')
@@ -25,8 +18,11 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 1
-BASE_AMOUNT = 3500
+BASE_AMOUNT = 3700
 MAX_TRADES_PER_CANDLE = 2
+
+TIMEFRAME_M1 = 60
+TIMEFRAME_M5 = 300
 
 PAIRS = [
     "EURUSD-OTC","GBPUSD-OTC","AUDUSD-OTC","USDCAD-OTC","USDCHF-OTC",
@@ -36,7 +32,6 @@ PAIRS = [
 ]
 
 # ================= TELEGRAM =================
-
 def send(msg):
     if not TOKEN or not CHAT_ID:
         return
@@ -44,14 +39,13 @@ def send(msg):
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             data={"chat_id": CHAT_ID, "text": msg},
-            timeout=5
+            timeout=3
         )
     except:
         pass
 
 # ================= CONEXIÓN =================
-
-def connect_iq():
+def connect():
     while True:
         try:
             iq = IQ_Option(EMAIL, PASSWORD)
@@ -59,68 +53,36 @@ def connect_iq():
 
             if status:
                 iq.change_balance("PRACTICE")
-                send("✅ Bot sin EMA conectado")
+                print("✅ Conectado")
+                send("🔥 SNIPER PREDICTIVO ACTIVO")
                 return iq
         except:
             pass
-        time.sleep(5)
 
-iq = connect_iq()
-
-print("🔥 BOT PRICE ACTION ACTIVO")
-send("🔥 BOT PRICE ACTION ACTIVO")
-
-# ================= INDICADORES =================
-
-def indicators(df):
-    # RSI
-    delta = df["close"].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    df["rsi"] = 100 - (100 / (1 + rs))
-
-    # ATR
-    df["tr"] = np.maximum(
-        df["high"] - df["low"],
-        np.maximum(
-            abs(df["high"] - df["close"].shift()),
-            abs(df["low"] - df["close"].shift())
-        )
-    )
-    df["atr"] = df["tr"].rolling(14).mean()
-
-    return df
+        time.sleep(3)
 
 # ================= DATOS =================
-
-def get_data(pair):
+def get_df(iq, pair, tf):
     try:
-        data = iq.get_candles(pair, 60, 100, time.time())
+        data = iq.get_candles(pair, tf, 120, time.time())
         df = pd.DataFrame(data)
 
         if df.empty:
             return None
 
         df.rename(columns={"max": "high", "min": "low"}, inplace=True)
+        return df
 
-        return indicators(df)
     except:
         return None
 
-# ================= ESTRATEGIA SIN EMA =================
-
-def price_action_signal(df):
+# ================= DETECCIÓN PREDICTIVA =================
+def pre_signal(df1, df5):
     try:
-        last = df.iloc[-1]
-        prev = df.iloc[-2]
-        prev2 = df.iloc[-3]
+        last = df1.iloc[-1]
+        prev = df1.iloc[-2]
 
-        # volatilidad
-        if last["atr"] < df["atr"].mean():
-            return None
-
-        # fuerza de vela
+        # fuerza de vela actual (aunque no haya cerrado)
         body = abs(last["close"] - last["open"])
         range_ = last["high"] - last["low"]
 
@@ -129,22 +91,23 @@ def price_action_signal(df):
 
         strength = body / range_
 
-        if strength < 0.6:
-            return None
+        # contexto M5
+        m5_up = df5["close"].iloc[-1] > df5["close"].iloc[-3]
+        m5_down = df5["close"].iloc[-1] < df5["close"].iloc[-3]
 
-        # ================= CALL =================
+        # 🔥 PREDICCIÓN CALL
         if (
             last["close"] > prev["high"] and
-            prev["close"] > prev2["close"] and
-            last["rsi"] < 65
+            strength > 0.6 and
+            m5_up
         ):
             return "call"
 
-        # ================= PUT =================
+        # 🔥 PREDICCIÓN PUT
         if (
             last["close"] < prev["low"] and
-            prev["close"] < prev2["close"] and
-            last["rsi"] > 35
+            strength > 0.6 and
+            m5_down
         ):
             return "put"
 
@@ -153,62 +116,91 @@ def price_action_signal(df):
     except:
         return None
 
-# ================= TRADE =================
-
-def execute_trade(pair, direction):
-    try:
-        status, _ = iq.buy(BASE_AMOUNT, pair, direction, EXPIRATION)
-
-        if status:
-            msg = f"🎯 {pair} {direction.upper()}"
-            print(msg)
-            send(msg)
-
-    except:
-        pass
-
-# ================= TIMING =================
-
-def wait_new_candle():
+# ================= ESPERA APERTURA EXACTA =================
+def wait_open(iq):
     while True:
-        if int(iq.get_server_timestamp()) % 60 == 0:
+        t = iq.get_server_timestamp()
+        sec = t % 60
+
+        if sec >= 59.7 or sec <= 0.2:
             break
-        time.sleep(0.2)
 
-# ================= LOOP =================
+        time.sleep(0.01)
 
-last_candle = None
+# ================= MAIN =================
+def main():
+    iq = connect()
+    risk = RiskManager()
 
-while True:
-    try:
-        wait_new_candle()
+    last_candle = None
+    cached_signals = []
 
-        candle = int(iq.get_server_timestamp() // 60)
+    print("🔥 BOT SNIPER PREDICTIVO")
 
-        if candle == last_candle:
-            continue
+    while True:
+        try:
+            server_time = iq.get_server_timestamp()
+            sec = server_time % 60
 
-        last_candle = candle
-        trades = 0
+            # 🔥 ANALIZA ANTES DE CIERRE
+            if 50 <= sec <= 58:
+                cached_signals.clear()
 
-        for pair in PAIRS:
+                ranked = []
 
-            df = get_data(pair)
+                for pair in PAIRS:
+                    df1 = get_df(iq, pair, TIMEFRAME_M1)
+                    df5 = get_df(iq, pair, TIMEFRAME_M5)
 
-            if df is None:
-                continue
+                    if df1 is None or df5 is None:
+                        continue
 
-            signal = price_action_signal(df)
+                    score = score_market(df1, df5)
+                    ranked.append((pair, score, df1, df5))
 
-            if signal:
-                execute_trade(pair, signal)
-                trades += 1
+                ranked.sort(key=lambda x: x[1], reverse=True)
+                best = ranked[:5]
 
-            if trades >= MAX_TRADES_PER_CANDLE:
-                break
+                for pair, _, df1, df5 in best:
+                    signal = pre_signal(df1, df5)
+                    if signal:
+                        cached_signals.append((pair, signal))
 
-        print(f"⏱ Trades ejecutados: {trades}")
+            # 🔥 ENTRADA EXACTA
+            if sec >= 59.7 or sec <= 0.2:
 
-    except Exception as e:
-        print("Error:", e)
-        time.sleep(2)
+                candle = int(server_time // 60)
+
+                if candle == last_candle:
+                    continue
+
+                last_candle = candle
+                trades = 0
+
+                for pair, signal in cached_signals:
+
+                    if not risk.can_trade():
+                        break
+
+                    status, _ = iq.buy(BASE_AMOUNT, pair, signal, EXPIRATION)
+
+                    if status:
+                        msg = f"⚡ PREDICTIVO {pair} {signal.upper()}"
+                        print(msg)
+                        send(msg)
+                        trades += 1
+                        risk.register_trade()
+
+                    if trades >= MAX_TRADES_PER_CANDLE:
+                        break
+
+                print(f"🚀 Trades predictivos: {trades}")
+
+            time.sleep(0.01)
+
+        except Exception as e:
+            print("Error:", e)
+            time.sleep(2)
+
+if __name__ == "__main__":
+    main()
