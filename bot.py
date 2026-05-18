@@ -18,11 +18,14 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 1
-BASE_AMOUNT = 3700
+BASE_AMOUNT = 4000
 MAX_TRADES_PER_CANDLE = 2
 
 TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
+
+BOT_ACTIVE = True
+LAST_UPDATE_ID = None
 
 PAIRS = [
     "EURUSD-OTC","GBPUSD-OTC","AUDUSD-OTC","USDCAD-OTC","USDCHF-OTC",
@@ -43,6 +46,42 @@ def send(msg):
         )
     except:
         pass
+
+
+def check_telegram_commands():
+    global BOT_ACTIVE, LAST_UPDATE_ID
+
+    if not TOKEN:
+        return
+
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+        params = {"timeout": 1, "offset": LAST_UPDATE_ID}
+        res = requests.get(url, params=params, timeout=3).json()
+
+        if not res.get("result"):
+            return
+
+        for update in res["result"]:
+            LAST_UPDATE_ID = update["update_id"] + 1
+
+            message = update.get("message", {})
+            text = message.get("text", "")
+
+            if not text:
+                continue
+
+            if text.lower() == "/stop":
+                BOT_ACTIVE = False
+                send("⛔ BOT DETENIDO")
+
+            elif text.lower() == "/start":
+                BOT_ACTIVE = True
+                send("✅ BOT ACTIVADO")
+
+    except:
+        pass
+
 
 # ================= CONEXIÓN =================
 def connect():
@@ -76,13 +115,12 @@ def get_df(iq, pair, tf):
     except:
         return None
 
-# ================= DETECCIÓN PREDICTIVA =================
+# ================= PREDICTIVO =================
 def pre_signal(df1, df5):
     try:
         last = df1.iloc[-1]
         prev = df1.iloc[-2]
 
-        # fuerza de vela actual (aunque no haya cerrado)
         body = abs(last["close"] - last["open"])
         range_ = last["high"] - last["low"]
 
@@ -91,41 +129,19 @@ def pre_signal(df1, df5):
 
         strength = body / range_
 
-        # contexto M5
         m5_up = df5["close"].iloc[-1] > df5["close"].iloc[-3]
         m5_down = df5["close"].iloc[-1] < df5["close"].iloc[-3]
 
-        # 🔥 PREDICCIÓN CALL
-        if (
-            last["close"] > prev["high"] and
-            strength > 0.6 and
-            m5_up
-        ):
+        if last["close"] > prev["high"] and strength > 0.6 and m5_up:
             return "call"
 
-        # 🔥 PREDICCIÓN PUT
-        if (
-            last["close"] < prev["low"] and
-            strength > 0.6 and
-            m5_down
-        ):
+        if last["close"] < prev["low"] and strength > 0.6 and m5_down:
             return "put"
 
         return None
 
     except:
         return None
-
-# ================= ESPERA APERTURA EXACTA =================
-def wait_open(iq):
-    while True:
-        t = iq.get_server_timestamp()
-        sec = t % 60
-
-        if sec >= 59.7 or sec <= 0.2:
-            break
-
-        time.sleep(0.01)
 
 # ================= MAIN =================
 def main():
@@ -135,17 +151,22 @@ def main():
     last_candle = None
     cached_signals = []
 
-    print("🔥 BOT SNIPER PREDICTIVO")
+    print("🔥 BOT CON CONTROL TELEGRAM")
 
     while True:
         try:
+            check_telegram_commands()
+
+            if not BOT_ACTIVE:
+                time.sleep(1)
+                continue
+
             server_time = iq.get_server_timestamp()
             sec = server_time % 60
 
-            # 🔥 ANALIZA ANTES DE CIERRE
+            # ANALIZA ANTES DE CIERRE
             if 50 <= sec <= 58:
                 cached_signals.clear()
-
                 ranked = []
 
                 for pair in PAIRS:
@@ -166,9 +187,8 @@ def main():
                     if signal:
                         cached_signals.append((pair, signal))
 
-            # 🔥 ENTRADA EXACTA
+            # ENTRADA
             if sec >= 59.7 or sec <= 0.2:
-
                 candle = int(server_time // 60)
 
                 if candle == last_candle:
@@ -185,7 +205,7 @@ def main():
                     status, _ = iq.buy(BASE_AMOUNT, pair, signal, EXPIRATION)
 
                     if status:
-                        msg = f"⚡ PREDICTIVO {pair} {signal.upper()}"
+                        msg = f"⚡ {pair} {signal.upper()}"
                         print(msg)
                         send(msg)
                         trades += 1
@@ -194,9 +214,9 @@ def main():
                     if trades >= MAX_TRADES_PER_CANDLE:
                         break
 
-                print(f"🚀 Trades predictivos: {trades}")
+                print(f"🚀 Trades: {trades}")
 
-            time.sleep(0.01)
+            time.sleep(0.05)
 
         except Exception as e:
             print("Error:", e)
