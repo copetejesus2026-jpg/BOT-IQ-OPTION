@@ -18,7 +18,7 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 1
-BASE_AMOUNT = 4000
+BASE_AMOUNT = 4500
 MAX_TRADES_PER_CANDLE = 2
 
 TIMEFRAME_M1 = 60
@@ -27,11 +27,11 @@ TIMEFRAME_M5 = 300
 BOT_ACTIVE = True
 LAST_UPDATE_ID = None
 
+# evitar sobreoperar mismo par
+PAIR_COOLDOWN = {}
+
 PAIRS = [
-    "EURUSD-OTC","GBPUSD-OTC","AUDUSD-OTC","USDCAD-OTC","USDCHF-OTC",
-    "EURJPY-OTC","GBPJPY-OTC","AUDJPY-OTC","CADJPY-OTC","CHFJPY-OTC",
-    "NZDJPY-OTC","EURAUD-OTC","EURGBP-OTC","EURCHF-OTC",
-    "GBPAUD-OTC","GBPCHF-OTC","AUDCAD-OTC","NZDCAD-OTC"
+EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","AUDUSD-OTC","USDCAD-OTC","EURGBP-OTC","EURJPY-OTC","EURAUD-OTC","EURCHF-OTC","EURNZD-OTC","GBPJPY-OTC","GBPCHF-OTC","GBPAUD-OTC","GBPCAD-OTC","AUDJPY-OTC","AUDCAD-OTC","AUDCHF-OTC","NZDCAD-OTC","EURTRY-OTC","USDTRY-OTC","USDZAR-OTC","EURZAR-OTC","USDNOK-OTC","USDSEK-OTC","EURSEK-OTC","EURNOK-OTC","GBPSEK-OTC
 ]
 
 # ================= TELEGRAM =================
@@ -59,17 +59,9 @@ def check_telegram_commands():
         params = {"timeout": 1, "offset": LAST_UPDATE_ID}
         res = requests.get(url, params=params, timeout=3).json()
 
-        if not res.get("result"):
-            return
-
-        for update in res["result"]:
+        for update in res.get("result", []):
             LAST_UPDATE_ID = update["update_id"] + 1
-
-            message = update.get("message", {})
-            text = message.get("text", "")
-
-            if not text:
-                continue
+            text = update.get("message", {}).get("text", "")
 
             if text.lower() == "/stop":
                 BOT_ACTIVE = False
@@ -92,13 +84,13 @@ def connect():
 
             if status:
                 iq.change_balance("PRACTICE")
-                print("✅ Conectado")
-                send("🔥 SNIPER PREDICTIVO ACTIVO")
+                send("🔥 HEDGE BOT ACTIVO")
                 return iq
         except:
             pass
 
         time.sleep(3)
+
 
 # ================= DATOS =================
 def get_df(iq, pair, tf):
@@ -115,33 +107,6 @@ def get_df(iq, pair, tf):
     except:
         return None
 
-# ================= PREDICTIVO =================
-def pre_signal(df1, df5):
-    try:
-        last = df1.iloc[-1]
-        prev = df1.iloc[-2]
-
-        body = abs(last["close"] - last["open"])
-        range_ = last["high"] - last["low"]
-
-        if range_ == 0:
-            return None
-
-        strength = body / range_
-
-        m5_up = df5["close"].iloc[-1] > df5["close"].iloc[-3]
-        m5_down = df5["close"].iloc[-1] < df5["close"].iloc[-3]
-
-        if last["close"] > prev["high"] and strength > 0.6 and m5_up:
-            return "call"
-
-        if last["close"] < prev["low"] and strength > 0.6 and m5_down:
-            return "put"
-
-        return None
-
-    except:
-        return None
 
 # ================= MAIN =================
 def main():
@@ -150,8 +115,6 @@ def main():
 
     last_candle = None
     cached_signals = []
-
-    print("🔥 BOT CON CONTROL TELEGRAM")
 
     while True:
         try:
@@ -164,7 +127,7 @@ def main():
             server_time = iq.get_server_timestamp()
             sec = server_time % 60
 
-            # ANALIZA ANTES DE CIERRE
+            # ================= ANALISIS =================
             if 50 <= sec <= 58:
                 cached_signals.clear()
                 ranked = []
@@ -180,14 +143,23 @@ def main():
                     ranked.append((pair, score, df1, df5))
 
                 ranked.sort(key=lambda x: x[1], reverse=True)
-                best = ranked[:5]
 
-                for pair, _, df1, df5 in best:
-                    signal = pre_signal(df1, df5)
+                # SOLO LOS MEJORES (PRECISIÓN > CANTIDAD)
+                best = ranked[:3]
+
+                for pair, score, df1, df5 in best:
+
+                    # cooldown 2 velas
+                    last_trade = PAIR_COOLDOWN.get(pair, 0)
+                    if time.time() - last_trade < 120:
+                        continue
+
+                    signal = get_signal(df1, df5)
+
                     if signal:
                         cached_signals.append((pair, signal))
 
-            # ENTRADA
+            # ================= ENTRADA SNIPER =================
             if sec >= 59.7 or sec <= 0.2:
                 candle = int(server_time // 60)
 
@@ -205,22 +177,22 @@ def main():
                     status, _ = iq.buy(BASE_AMOUNT, pair, signal, EXPIRATION)
 
                     if status:
-                        msg = f"⚡ {pair} {signal.upper()}"
-                        print(msg)
-                        send(msg)
+                        send(f"⚡ {pair} {signal.upper()}")
+                        PAIR_COOLDOWN[pair] = time.time()
                         trades += 1
                         risk.register_trade()
 
                     if trades >= MAX_TRADES_PER_CANDLE:
                         break
 
-                print(f"🚀 Trades: {trades}")
+                print(f"Trades ejecutados: {trades}")
 
             time.sleep(0.05)
 
         except Exception as e:
             print("Error:", e)
             time.sleep(2)
+
 
 if __name__ == "__main__":
     main()
