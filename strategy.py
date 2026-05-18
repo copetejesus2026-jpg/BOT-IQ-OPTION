@@ -1,34 +1,29 @@
 import numpy as np
+import pandas as pd
 
+# ================= INDICADORES =================
 def indicators(df):
-    # RSI
-    delta = df["close"].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    df["rsi"] = 100 - (100 / (1 + rs))
+    df = df.copy()
 
     # ATR
-    df["tr"] = np.maximum(
-        df["high"] - df["low"],
-        np.maximum(
-            abs(df["high"] - df["close"].shift()),
-            abs(df["low"] - df["close"].shift())
-        )
-    )
+    high_low = df["high"] - df["low"]
+    high_close = (df["high"] - df["close"].shift()).abs()
+    low_close = (df["low"] - df["close"].shift()).abs()
+
+    df["tr"] = np.maximum(high_low, np.maximum(high_close, low_close))
     df["atr"] = df["tr"].rolling(14).mean()
 
     return df
 
-def score_market(df1, df5):
-    try:
-        df1 = indicators(df1)
-        atr = df1["atr"].iloc[-1]
-        atr_avg = df1["atr"].mean()
-        return atr / atr_avg
-    except:
-        return 0
 
+# ================= DETECCIÓN LIQUIDEZ =================
+def liquidity_levels(df):
+    highs = df["high"].rolling(10).max()
+    lows = df["low"].rolling(10).min()
+    return highs, lows
+
+
+# ================= DETECCIÓN SMC =================
 def get_signal(df1, df5):
     try:
         df1 = indicators(df1)
@@ -37,15 +32,16 @@ def get_signal(df1, df5):
         last = df1.iloc[-1]
         prev = df1.iloc[-2]
 
-        # filtro volatilidad
+        highs, lows = liquidity_levels(df1)
+
+        last_high_liq = highs.iloc[-2]
+        last_low_liq = lows.iloc[-2]
+
+        # 🔥 filtro volatilidad
         if last["atr"] < df1["atr"].mean():
             return None
 
-        # tendencia M5
-        trend_up = df5["close"].iloc[-1] > df5["close"].iloc[-3]
-        trend_down = df5["close"].iloc[-1] < df5["close"].iloc[-3]
-
-        # fuerza vela
+        # 🔥 fuerza vela
         body = abs(last["close"] - last["open"])
         range_ = last["high"] - last["low"]
 
@@ -54,20 +50,44 @@ def get_signal(df1, df5):
 
         strength = body / range_
 
-        if strength < 0.55:
+        if strength < 0.6:
             return None
 
-        # ================= INVERTIDO =================
+        # ================= LIQUIDITY SWEEP =================
 
-        # ANTES ERA CALL → AHORA PUT
-        if last["close"] > prev["high"] and trend_up and last["rsi"] < 65:
+        # 🔴 FAKE BREAK ARRIBA → PUT
+        if (
+            last["high"] > last_high_liq and
+            last["close"] < last_high_liq and
+            prev["close"] > prev["open"]
+        ):
             return "put"
 
-        # ANTES ERA PUT → AHORA CALL
-        if last["close"] < prev["low"] and trend_down and last["rsi"] > 35:
+        # 🟢 FAKE BREAK ABAJO → CALL
+        if (
+            last["low"] < last_low_liq and
+            last["close"] > last_low_liq and
+            prev["close"] < prev["open"]
+        ):
             return "call"
 
         return None
 
     except:
         return None
+
+
+# ================= SCORE =================
+def score_market(df1, df5):
+    try:
+        df1 = indicators(df1)
+        atr = df1["atr"].iloc[-1]
+        atr_avg = df1["atr"].mean()
+
+        if atr_avg == 0:
+            return 0
+
+        return atr / atr_avg
+
+    except:
+        return 0
