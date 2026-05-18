@@ -18,7 +18,7 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 1
-BASE_AMOUNT = 4700
+BASE_AMOUNT = 4750
 MAX_TRADES_PER_CANDLE = 2
 
 TIMEFRAME_M1 = 60
@@ -29,7 +29,6 @@ LAST_UPDATE_ID = None
 
 PAIR_COOLDOWN = {}
 
-# ✅ LISTA CORREGIDA (AQUÍ ESTABA EL ERROR)
 PAIRS = [
     "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","AUDUSD-OTC",
     "USDCAD-OTC","EURGBP-OTC","EURJPY-OTC","EURAUD-OTC",
@@ -53,6 +52,45 @@ def send(msg):
         pass
 
 
+def check_telegram_commands():
+    global BOT_ACTIVE, LAST_UPDATE_ID
+
+    if not TOKEN:
+        return
+
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+        params = {"timeout": 1}
+
+        if LAST_UPDATE_ID:
+            params["offset"] = LAST_UPDATE_ID
+
+        res = requests.get(url, params=params, timeout=3).json()
+
+        for update in res.get("result", []):
+            LAST_UPDATE_ID = update["update_id"] + 1
+
+            message = update.get("message", {})
+            text = message.get("text", "")
+
+            if not text:
+                continue
+
+            text = text.lower()
+
+            if text == "/stop":
+                BOT_ACTIVE = False
+                send("⛔ BOT DETENIDO")
+
+            elif text == "/start":
+                BOT_ACTIVE = True
+                send("✅ BOT ACTIVADO")
+
+    except:
+        pass
+
+
+# ================= CONEXIÓN =================
 def connect():
     while True:
         try:
@@ -69,6 +107,7 @@ def connect():
         time.sleep(3)
 
 
+# ================= DATOS =================
 def get_df(iq, pair, tf):
     try:
         data = iq.get_candles(pair, tf, 120, time.time())
@@ -84,6 +123,7 @@ def get_df(iq, pair, tf):
         return None
 
 
+# ================= MAIN =================
 def main():
     iq = connect()
     risk = RiskManager()
@@ -93,10 +133,18 @@ def main():
 
     while True:
         try:
+            # 🔥 ESCUCHA TELEGRAM SIEMPRE
+            check_telegram_commands()
+
+            # ⛔ SI ESTÁ DETENIDO, NO OPERA
+            if not BOT_ACTIVE:
+                time.sleep(1)
+                continue
+
             server_time = iq.get_server_timestamp()
             sec = server_time % 60
 
-            # ANALISIS
+            # ================= ANALISIS =================
             if 50 <= sec <= 58:
                 cached_signals.clear()
                 ranked = []
@@ -125,7 +173,7 @@ def main():
                     if signal:
                         cached_signals.append((pair, signal))
 
-            # ENTRADA
+            # ================= ENTRADA =================
             if sec >= 59.7 or sec <= 0.2:
                 candle = int(server_time // 60)
 
