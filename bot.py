@@ -2,12 +2,19 @@ import time
 import os
 import requests
 import pandas as pd
+import numpy as np
 import sys
 import logging
 
-from iqoptionapi.stable_api import IQ_Option
-from strategy import get_signal, score_market
-from risk import RiskManager
+# ================= IQ =================
+try:
+    from iqoptionapi.stable_api import IQ_Option
+except ImportError:
+    print("❌ iqoptionapi no instalado")
+    time.sleep(60)
+    exit()
+
+# ================= CONFIG =================
 
 logging.getLogger().setLevel(logging.CRITICAL)
 sys.stderr = open(os.devnull, 'w')
@@ -18,14 +25,8 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 1
-BASE_AMOUNT = 3590
+BASE_AMOUNT = 3500
 MAX_TRADES_PER_CANDLE = 2
-
-TIMEFRAME_M1 = 60
-TIMEFRAME_M5 = 300
-
-BOT_ACTIVE = True
-LAST_UPDATE_ID = None
 
 PAIRS = [
     "EURUSD-OTC","GBPUSD-OTC","AUDUSD-OTC","USDCAD-OTC","USDCHF-OTC",
@@ -35,6 +36,7 @@ PAIRS = [
 ]
 
 # ================= TELEGRAM =================
+
 def send(msg):
     if not TOKEN or not CHAT_ID:
         return
@@ -42,48 +44,14 @@ def send(msg):
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             data={"chat_id": CHAT_ID, "text": msg},
-            timeout=3
+            timeout=5
         )
     except:
         pass
 
-
-def check_telegram_commands():
-    global BOT_ACTIVE, LAST_UPDATE_ID
-
-    if not TOKEN:
-        return
-
-    try:
-        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
-        params = {"timeout": 1, "offset": LAST_UPDATE_ID}
-        res = requests.get(url, params=params, timeout=3).json()
-
-        if not res.get("result"):
-            return
-
-        for update in res["result"]:
-            LAST_UPDATE_ID = update["update_id"] + 1
-
-            message = update.get("message", {})
-            text = message.get("text", "")
-
-            if not text:
-                continue
-
-            if text.lower() == "/stop":
-                BOT_ACTIVE = False
-                send("⛔ BOT DETENIDO")
-
-            elif text.lower() == "/start":
-                BOT_ACTIVE = True
-                send("✅ BOT ACTIVADO")
-
-    except:
-        pass
-
 # ================= CONEXIÓN =================
-def connect():
+
+def connect_iq():
     while True:
         try:
             iq = IQ_Option(EMAIL, PASSWORD)
@@ -91,35 +59,68 @@ def connect():
 
             if status:
                 iq.change_balance("PRACTICE")
-                print("✅ Conectado")
-                send("🔥 BOT CONTRARIAN ACTIVO")
+                send("✅ Bot sin EMA conectado")
                 return iq
         except:
             pass
+        time.sleep(5)
 
-        time.sleep(3)
+iq = connect_iq()
+
+print("🔥 BOT PRICE ACTION ACTIVO")
+send("🔥 BOT PRICE ACTION ACTIVO")
+
+# ================= INDICADORES =================
+
+def indicators(df):
+    # RSI
+    delta = df["close"].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss
+    df["rsi"] = 100 - (100 / (1 + rs))
+
+    # ATR
+    df["tr"] = np.maximum(
+        df["high"] - df["low"],
+        np.maximum(
+            abs(df["high"] - df["close"].shift()),
+            abs(df["low"] - df["close"].shift())
+        )
+    )
+    df["atr"] = df["tr"].rolling(14).mean()
+
+    return df
 
 # ================= DATOS =================
-def get_df(iq, pair, tf):
+
+def get_data(pair):
     try:
-        data = iq.get_candles(pair, tf, 120, time.time())
+        data = iq.get_candles(pair, 60, 100, time.time())
         df = pd.DataFrame(data)
 
         if df.empty:
             return None
 
         df.rename(columns={"max": "high", "min": "low"}, inplace=True)
-        return df
 
+        return indicators(df)
     except:
         return None
 
-# ================= PREDICTIVO INVERTIDO =================
-def pre_signal(df1, df5):
-    try:
-        last = df1.iloc[-1]
-        prev = df1.iloc[-2]
+# ================= ESTRATEGIA SIN EMA =================
 
+def price_action_signal(df):
+    try:
+        last = df.iloc[-1]
+        prev = df.iloc[-2]
+        prev2 = df.iloc[-3]
+
+        # volatilidad
+        if last["atr"] < df["atr"].mean():
+            return None
+
+        # fuerza de vela
         body = abs(last["close"] - last["open"])
         range_ = last["high"] - last["low"]
 
@@ -128,102 +129,86 @@ def pre_signal(df1, df5):
 
         strength = body / range_
 
-        m5_up = df5["close"].iloc[-1] > df5["close"].iloc[-3]
-        m5_down = df5["close"].iloc[-1] < df5["close"].iloc[-3]
+        if strength < 0.6:
+            return None
 
-        # 🔁 INVERTIDO
-
-        # rompe arriba → PUT
-        if last["close"] > prev["high"] and strength > 0.6 and m5_up:
-            return "put"
-
-        # rompe abajo → CALL
-        if last["close"] < prev["low"] and strength > 0.6 and m5_down:
+        # ================= CALL =================
+        if (
+            last["close"] > prev["high"] and
+            prev["close"] > prev2["close"] and
+            last["rsi"] < 65
+        ):
             return "call"
+
+        # ================= PUT =================
+        if (
+            last["close"] < prev["low"] and
+            prev["close"] < prev2["close"] and
+            last["rsi"] > 35
+        ):
+            return "put"
 
         return None
 
     except:
         return None
 
-# ================= MAIN =================
-def main():
-    iq = connect()
-    risk = RiskManager()
+# ================= TRADE =================
 
-    last_candle = None
-    cached_signals = []
+def execute_trade(pair, direction):
+    try:
+        status, _ = iq.buy(BASE_AMOUNT, pair, direction, EXPIRATION)
 
-    print("🔥 BOT CONTRARIAN SNIPER")
+        if status:
+            msg = f"🎯 {pair} {direction.upper()}"
+            print(msg)
+            send(msg)
 
+    except:
+        pass
+
+# ================= TIMING =================
+
+def wait_new_candle():
     while True:
-        try:
-            check_telegram_commands()
+        if int(iq.get_server_timestamp()) % 60 == 0:
+            break
+        time.sleep(0.2)
 
-            if not BOT_ACTIVE:
-                time.sleep(1)
+# ================= LOOP =================
+
+last_candle = None
+
+while True:
+    try:
+        wait_new_candle()
+
+        candle = int(iq.get_server_timestamp() // 60)
+
+        if candle == last_candle:
+            continue
+
+        last_candle = candle
+        trades = 0
+
+        for pair in PAIRS:
+
+            df = get_data(pair)
+
+            if df is None:
                 continue
 
-            server_time = iq.get_server_timestamp()
-            sec = server_time % 60
+            signal = price_action_signal(df)
 
-            # ANALIZA ANTES DE CIERRE
-            if 50 <= sec <= 58:
-                cached_signals.clear()
-                ranked = []
+            if signal:
+                execute_trade(pair, signal)
+                trades += 1
 
-                for pair in PAIRS:
-                    df1 = get_df(iq, pair, TIMEFRAME_M1)
-                    df5 = get_df(iq, pair, TIMEFRAME_M5)
+            if trades >= MAX_TRADES_PER_CANDLE:
+                break
 
-                    if df1 is None or df5 is None:
-                        continue
+        print(f"⏱ Trades ejecutados: {trades}")
 
-                    score = score_market(df1, df5)
-                    ranked.append((pair, score, df1, df5))
-
-                ranked.sort(key=lambda x: x[1], reverse=True)
-                best = ranked[:5]
-
-                for pair, _, df1, df5 in best:
-                    signal = pre_signal(df1, df5)
-                    if signal:
-                        cached_signals.append((pair, signal))
-
-            # ENTRADA
-            if sec >= 59.7 or sec <= 0.2:
-                candle = int(server_time // 60)
-
-                if candle == last_candle:
-                    continue
-
-                last_candle = candle
-                trades = 0
-
-                for pair, signal in cached_signals:
-
-                    if not risk.can_trade():
-                        break
-
-                    status, _ = iq.buy(BASE_AMOUNT, pair, signal, EXPIRATION)
-
-                    if status:
-                        msg = f"⚡ CONTRARIAN {pair} {signal.upper()}"
-                        print(msg)
-                        send(msg)
-                        trades += 1
-                        risk.register_trade()
-
-                    if trades >= MAX_TRADES_PER_CANDLE:
-                        break
-
-                print(f"🚀 Trades: {trades}")
-
-            time.sleep(0.05)
-
-        except Exception as e:
-            print("Error:", e)
-            time.sleep(2)
-
-if __name__ == "__main__":
-    main()
+    except Exception as e:
+        print("Error:", e)
+        time.sleep(2)
