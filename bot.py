@@ -2,7 +2,6 @@ import time
 import os
 import requests
 import pandas as pd
-import numpy as np
 import sys
 import logging
 
@@ -19,7 +18,7 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 1
-BASE_AMOUNT = 3700
+BASE_AMOUNT = 4000
 MAX_TRADES_PER_CANDLE = 2
 
 TIMEFRAME_M1 = 60
@@ -40,7 +39,7 @@ def send(msg):
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             data={"chat_id": CHAT_ID, "text": msg},
-            timeout=5
+            timeout=3
         )
     except:
         pass
@@ -50,25 +49,22 @@ def connect():
     while True:
         try:
             iq = IQ_Option(EMAIL, PASSWORD)
-            status, reason = iq.connect()
+            status, _ = iq.connect()
 
             if status:
                 iq.change_balance("PRACTICE")
                 print("✅ Conectado")
-                send("✅ Bot conectado")
+                send("🔥 SNIPER PREDICTIVO ACTIVO")
                 return iq
-            else:
-                print("❌ Error:", reason)
+        except:
+            pass
 
-        except Exception as e:
-            print("❌ Excepción:", e)
-
-        time.sleep(5)
+        time.sleep(3)
 
 # ================= DATOS =================
-def get_df(iq, pair, timeframe, n=120):
+def get_df(iq, pair, tf):
     try:
-        data = iq.get_candles(pair, timeframe, n, time.time())
+        data = iq.get_candles(pair, tf, 120, time.time())
         df = pd.DataFrame(data)
 
         if df.empty:
@@ -80,12 +76,54 @@ def get_df(iq, pair, timeframe, n=120):
     except:
         return None
 
-# ================= TIMING =================
-def wait_new_candle(iq):
+# ================= DETECCIÓN PREDICTIVA (INVERTIDA) =================
+def pre_signal(df1, df5):
+    try:
+        last = df1.iloc[-1]
+        prev = df1.iloc[-2]
+
+        body = abs(last["close"] - last["open"])
+        range_ = last["high"] - last["low"]
+
+        if range_ == 0:
+            return None
+
+        strength = body / range_
+
+        m5_up = df5["close"].iloc[-1] > df5["close"].iloc[-3]
+        m5_down = df5["close"].iloc[-1] < df5["close"].iloc[-3]
+
+        # 🔥 AHORA ERA CALL → SE VUELVE PUT
+        if (
+            last["close"] > prev["high"] and
+            strength > 0.6 and
+            m5_up
+        ):
+            return "put"
+
+        # 🔥 AHORA ERA PUT → SE VUELVE CALL
+        if (
+            last["close"] < prev["low"] and
+            strength > 0.6 and
+            m5_down
+        ):
+            return "call"
+
+        return None
+
+    except:
+        return None
+
+# ================= ESPERA APERTURA EXACTA =================
+def wait_open(iq):
     while True:
-        if int(iq.get_server_timestamp()) % 60 == 0:
+        t = iq.get_server_timestamp()
+        sec = t % 60
+
+        if sec >= 59.7 or sec <= 0.2:
             break
-        time.sleep(0.2)
+
+        time.sleep(0.01)
 
 # ================= MAIN =================
 def main():
@@ -93,63 +131,74 @@ def main():
     risk = RiskManager()
 
     last_candle = None
+    cached_signals = []
 
-    print("🔥 BOT ACTIVO")
+    print("🔥 BOT SNIPER PREDICTIVO (INVERTIDO)")
 
     while True:
         try:
-            wait_new_candle(iq)
+            server_time = iq.get_server_timestamp()
+            sec = server_time % 60
 
-            candle = int(iq.get_server_timestamp() // 60)
+            # 🔥 ANALIZA ANTES DE CIERRE
+            if 50 <= sec <= 58:
+                cached_signals.clear()
 
-            if candle == last_candle:
-                continue
+                ranked = []
 
-            last_candle = candle
+                for pair in PAIRS:
+                    df1 = get_df(iq, pair, TIMEFRAME_M1)
+                    df5 = get_df(iq, pair, TIMEFRAME_M5)
 
-            ranked = []
+                    if df1 is None or df5 is None:
+                        continue
 
-            # 🔥 Ranking mercado
-            for pair in PAIRS:
-                df1 = get_df(iq, pair, TIMEFRAME_M1)
-                df5 = get_df(iq, pair, TIMEFRAME_M5)
+                    score = score_market(df1, df5)
+                    ranked.append((pair, score, df1, df5))
 
-                if df1 is None or df5 is None:
+                ranked.sort(key=lambda x: x[1], reverse=True)
+                best = ranked[:5]
+
+                for pair, _, df1, df5 in best:
+                    signal = pre_signal(df1, df5)
+                    if signal:
+                        cached_signals.append((pair, signal))
+
+            # 🔥 ENTRADA EXACTA
+            if sec >= 59.7 or sec <= 0.2:
+
+                candle = int(server_time // 60)
+
+                if candle == last_candle:
                     continue
 
-                score = score_market(df1, df5)
-                ranked.append((pair, score, df1, df5))
+                last_candle = candle
+                trades = 0
 
-            ranked.sort(key=lambda x: x[1], reverse=True)
-            best_pairs = ranked[:5]
+                for pair, signal in cached_signals:
 
-            trades = 0
+                    if not risk.can_trade():
+                        break
 
-            for pair, _, df1, df5 in best_pairs:
-
-                if not risk.can_trade():
-                    break
-
-                signal = get_signal(df1, df5)
-
-                if signal:
                     status, _ = iq.buy(BASE_AMOUNT, pair, signal, EXPIRATION)
 
                     if status:
-                        msg = f"🎯 {pair} {signal.upper()}"
+                        msg = f"⚡ PREDICTIVO {pair} {signal.upper()}"
                         print(msg)
                         send(msg)
                         trades += 1
                         risk.register_trade()
 
-                if trades >= MAX_TRADES_PER_CANDLE:
-                    break
+                    if trades >= MAX_TRADES_PER_CANDLE:
+                        break
 
-            print(f"⏱ Trades: {trades}")
+                print(f"🚀 Trades predictivos: {trades}")
+
+            time.sleep(0.01)
 
         except Exception as e:
-            print("❌ Error loop:", e)
-            time.sleep(3)
+            print("Error:", e)
+            time.sleep(2)
 
 if __name__ == "__main__":
     main()
