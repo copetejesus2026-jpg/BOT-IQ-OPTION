@@ -18,7 +18,7 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 1
-BASE_AMOUNT = 3500
+BASE_AMOUNT = 3590
 MAX_TRADES_PER_CANDLE = 2
 
 TIMEFRAME_M1 = 60
@@ -82,7 +82,6 @@ def check_telegram_commands():
     except:
         pass
 
-
 # ================= CONEXIÓN =================
 def connect():
     while True:
@@ -93,7 +92,7 @@ def connect():
             if status:
                 iq.change_balance("PRACTICE")
                 print("✅ Conectado")
-                send("🔥 SNIPER PREDICTIVO ACTIVO")
+                send("🔥 BOT CONTRARIAN ACTIVO")
                 return iq
         except:
             pass
@@ -115,7 +114,7 @@ def get_df(iq, pair, tf):
     except:
         return None
 
-# ================= PREDICTIVO =================
+# ================= PREDICTIVO INVERTIDO =================
 def pre_signal(df1, df5):
     try:
         last = df1.iloc[-1]
@@ -132,11 +131,15 @@ def pre_signal(df1, df5):
         m5_up = df5["close"].iloc[-1] > df5["close"].iloc[-3]
         m5_down = df5["close"].iloc[-1] < df5["close"].iloc[-3]
 
-        if last["close"] > prev["high"] and strength > 0.6 and m5_up:
-            return "call"
+        # 🔁 INVERTIDO
 
-        if last["close"] < prev["low"] and strength > 0.6 and m5_down:
+        # rompe arriba → PUT
+        if last["close"] > prev["high"] and strength > 0.6 and m5_up:
             return "put"
+
+        # rompe abajo → CALL
+        if last["close"] < prev["low"] and strength > 0.6 and m5_down:
+            return "call"
 
         return None
 
@@ -151,7 +154,7 @@ def main():
     last_candle = None
     cached_signals = []
 
-    print("🔥 BOT CON CONTROL TELEGRAM")
+    print("🔥 BOT CONTRARIAN SNIPER")
 
     while True:
         try:
@@ -205,7 +208,7 @@ def main():
                     status, _ = iq.buy(BASE_AMOUNT, pair, signal, EXPIRATION)
 
                     if status:
-                        msg = f"⚡ {pair} {signal.upper()}"
+                        msg = f"⚡ CONTRARIAN {pair} {signal.upper()}"
                         print(msg)
                         send(msg)
                         trades += 1
