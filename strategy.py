@@ -1,71 +1,181 @@
 import numpy as np
 
-def indicators(df):
-    # RSI
-    delta = df["close"].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    df["rsi"] = 100 - (100 / (1 + rs))
+# ================= UTILIDADES =================
 
-    # ATR
-    df["tr"] = np.maximum(
-        df["high"] - df["low"],
-        np.maximum(
-            abs(df["high"] - df["close"].shift()),
-            abs(df["low"] - df["close"].shift())
-        )
+def body(c):
+    return abs(c["close"] - c["open"])
+
+def range_c(c):
+    return c["high"] - c["low"]
+
+def bullish(c):
+    return c["close"] > c["open"]
+
+def bearish(c):
+    return c["close"] < c["open"]
+
+def upper_wick(c):
+    return c["high"] - max(c["open"], c["close"])
+
+def lower_wick(c):
+    return min(c["open"], c["close"]) - c["low"]
+
+
+# ================= FILTRO MERCADO =================
+
+def is_compression(df):
+    ranges = (df["high"] - df["low"]).values[-10:]
+    avg = np.mean(ranges)
+    return avg < np.max(ranges) * 0.3
+
+
+# ================= LIQUIDEZ =================
+
+def equal_highs(df, tol=0.00015):
+    highs = df["high"].values[-6:]
+    return max(highs) - min(highs) < tol
+
+def equal_lows(df, tol=0.00015):
+    lows = df["low"].values[-6:]
+    return max(lows) - min(lows) < tol
+
+
+# ================= BOS =================
+
+def bos(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    if last["close"] > prev["high"]:
+        return "bullish"
+
+    if last["close"] < prev["low"]:
+        return "bearish"
+
+    return None
+
+
+# ================= LIQUIDITY GRAB =================
+
+def grab_up(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    return (
+        last["high"] > prev["high"] and
+        last["close"] < prev["high"] and
+        upper_wick(last) > body(last) * 1.2
     )
-    df["atr"] = df["tr"].rolling(14).mean()
 
-    return df
+def grab_down(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    return (
+        last["low"] < prev["low"] and
+        last["close"] > prev["low"] and
+        lower_wick(last) > body(last) * 1.2
+    )
+
+
+# ================= ORDER BLOCK =================
+
+def bull_ob(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    return (
+        bearish(prev) and
+        bullish(last) and
+        last["close"] > prev["high"]
+    )
+
+def bear_ob(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    return (
+        bullish(prev) and
+        bearish(last) and
+        last["close"] < prev["low"]
+    )
+
+
+# ================= CONFIRMACIÓN =================
+
+def confirmation(df, direction):
+    c1 = df.iloc[-1]
+    c2 = df.iloc[-2]
+
+    if direction == "call":
+        return bullish(c1) and bullish(c2)
+
+    if direction == "put":
+        return bearish(c1) and bearish(c2)
+
+    return False
+
+
+# ================= SCORE =================
 
 def score_market(df1, df5):
     try:
-        df1 = indicators(df1)
-        atr = df1["atr"].iloc[-1]
-        atr_avg = df1["atr"].mean()
-        return atr / atr_avg
+        score = 1
+
+        if equal_highs(df5) or equal_lows(df5):
+            score += 1
+
+        if bos(df5):
+            score += 1
+
+        if not is_compression(df1):
+            score += 1
+
+        return score
     except:
         return 0
 
+
+# ================= SEÑAL =================
+
 def get_signal(df1, df5):
     try:
-        df1 = indicators(df1)
-        df5 = indicators(df5)
-
         last = df1.iloc[-1]
-        prev = df1.iloc[-2]
 
-        # filtro volatilidad
-        if last["atr"] < df1["atr"].mean():
+        if range_c(last) == 0:
             return None
 
-        # tendencia M5
-        trend_up = df5["close"].iloc[-1] > df5["close"].iloc[-3]
-        trend_down = df5["close"].iloc[-1] < df5["close"].iloc[-3]
-
-        # fuerza vela
-        body = abs(last["close"] - last["open"])
-        range_ = last["high"] - last["low"]
-
-        if range_ == 0:
+        if is_compression(df1):
             return None
 
-        strength = body / range_
-
+        strength = body(last) / range_c(last)
         if strength < 0.55:
             return None
 
-        # ================= INVERTIDO =================
+        # ================= SETUPS =================
 
-        # ANTES ERA CALL → AHORA PUT
-        if last["close"] > prev["high"] and trend_up and last["rsi"] < 65:
+        # LIQUIDITY GRAB + CONFIRMACIÓN
+        if grab_up(df1) and confirmation(df1, "put"):
             return "put"
 
-        # ANTES ERA PUT → AHORA CALL
-        if last["close"] < prev["low"] and trend_down and last["rsi"] > 35:
+        if grab_down(df1) and confirmation(df1, "call"):
             return "call"
+
+        # ORDER BLOCK + CONFIRMACIÓN
+        if bull_ob(df1) and confirmation(df1, "call"):
+            return "call"
+
+        if bear_ob(df1) and confirmation(df1, "put"):
+            return "put"
+
+        # BOS + FUERZA
+        structure = bos(df1)
+
+        if structure == "bullish" and confirmation(df1, "call"):
+            return "call"
+
+        if structure == "bearish" and confirmation(df1, "put"):
+            return "put"
 
         return None
 
