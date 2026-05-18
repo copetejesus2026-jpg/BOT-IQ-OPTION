@@ -18,7 +18,7 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 1
-BASE_AMOUNT = 4500
+BASE_AMOUNT = 4700
 MAX_TRADES_PER_CANDLE = 2
 
 TIMEFRAME_M1 = 60
@@ -27,11 +27,16 @@ TIMEFRAME_M5 = 300
 BOT_ACTIVE = True
 LAST_UPDATE_ID = None
 
-# evitar sobreoperar mismo par
 PAIR_COOLDOWN = {}
 
+# ✅ LISTA CORREGIDA (AQUÍ ESTABA EL ERROR)
 PAIRS = [
-EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","AUDUSD-OTC","USDCAD-OTC","EURGBP-OTC","EURJPY-OTC","EURAUD-OTC","EURCHF-OTC","EURNZD-OTC","GBPJPY-OTC","GBPCHF-OTC","GBPAUD-OTC","GBPCAD-OTC","AUDJPY-OTC","AUDCAD-OTC","AUDCHF-OTC","NZDCAD-OTC","EURTRY-OTC","USDTRY-OTC","USDZAR-OTC","EURZAR-OTC","USDNOK-OTC","USDSEK-OTC","EURSEK-OTC","EURNOK-OTC","GBPSEK-OTC
+    "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","AUDUSD-OTC",
+    "USDCAD-OTC","EURGBP-OTC","EURJPY-OTC","EURAUD-OTC",
+    "EURCHF-OTC","EURNZD-OTC","GBPJPY-OTC","GBPCHF-OTC","GBPAUD-OTC",
+    "GBPCAD-OTC","AUDJPY-OTC","AUDCAD-OTC","AUDCHF-OTC","NZDJPY-OTC",
+    "NZDCAD-OTC","EURTRY-OTC","USDTRY-OTC","USDZAR-OTC","EURZAR-OTC",
+    "USDNOK-OTC","USDSEK-OTC","EURSEK-OTC","EURNOK-OTC","GBPSEK-OTC"
 ]
 
 # ================= TELEGRAM =================
@@ -48,34 +53,6 @@ def send(msg):
         pass
 
 
-def check_telegram_commands():
-    global BOT_ACTIVE, LAST_UPDATE_ID
-
-    if not TOKEN:
-        return
-
-    try:
-        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
-        params = {"timeout": 1, "offset": LAST_UPDATE_ID}
-        res = requests.get(url, params=params, timeout=3).json()
-
-        for update in res.get("result", []):
-            LAST_UPDATE_ID = update["update_id"] + 1
-            text = update.get("message", {}).get("text", "")
-
-            if text.lower() == "/stop":
-                BOT_ACTIVE = False
-                send("⛔ BOT DETENIDO")
-
-            elif text.lower() == "/start":
-                BOT_ACTIVE = True
-                send("✅ BOT ACTIVADO")
-
-    except:
-        pass
-
-
-# ================= CONEXIÓN =================
 def connect():
     while True:
         try:
@@ -84,7 +61,7 @@ def connect():
 
             if status:
                 iq.change_balance("PRACTICE")
-                send("🔥 HEDGE BOT ACTIVO")
+                send("🔥 BOT HEDGE ACTIVO")
                 return iq
         except:
             pass
@@ -92,7 +69,6 @@ def connect():
         time.sleep(3)
 
 
-# ================= DATOS =================
 def get_df(iq, pair, tf):
     try:
         data = iq.get_candles(pair, tf, 120, time.time())
@@ -108,7 +84,6 @@ def get_df(iq, pair, tf):
         return None
 
 
-# ================= MAIN =================
 def main():
     iq = connect()
     risk = RiskManager()
@@ -118,16 +93,10 @@ def main():
 
     while True:
         try:
-            check_telegram_commands()
-
-            if not BOT_ACTIVE:
-                time.sleep(1)
-                continue
-
             server_time = iq.get_server_timestamp()
             sec = server_time % 60
 
-            # ================= ANALISIS =================
+            # ANALISIS
             if 50 <= sec <= 58:
                 cached_signals.clear()
                 ranked = []
@@ -143,13 +112,10 @@ def main():
                     ranked.append((pair, score, df1, df5))
 
                 ranked.sort(key=lambda x: x[1], reverse=True)
-
-                # SOLO LOS MEJORES (PRECISIÓN > CANTIDAD)
                 best = ranked[:3]
 
-                for pair, score, df1, df5 in best:
+                for pair, _, df1, df5 in best:
 
-                    # cooldown 2 velas
                     last_trade = PAIR_COOLDOWN.get(pair, 0)
                     if time.time() - last_trade < 120:
                         continue
@@ -159,7 +125,7 @@ def main():
                     if signal:
                         cached_signals.append((pair, signal))
 
-            # ================= ENTRADA SNIPER =================
+            # ENTRADA
             if sec >= 59.7 or sec <= 0.2:
                 candle = int(server_time // 60)
 
@@ -185,7 +151,7 @@ def main():
                     if trades >= MAX_TRADES_PER_CANDLE:
                         break
 
-                print(f"Trades ejecutados: {trades}")
+                print(f"Trades: {trades}")
 
             time.sleep(0.05)
 
