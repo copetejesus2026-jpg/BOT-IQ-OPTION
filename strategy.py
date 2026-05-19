@@ -14,26 +14,6 @@ def bullish(c):
 def bearish(c):
     return c["close"] < c["open"]
 
-# ================= FILTROS =================
-
-def is_overextended(df):
-    last = df.iloc[-1]
-    avg = np.mean(df["high"] - df["low"])
-    return range_c(last) > avg * 1.7
-
-def mid_price(df):
-    high = df["high"].max()
-    low = df["low"].min()
-    return (high + low) / 2
-
-def in_discount(df):
-    last = df.iloc[-1]
-    return last["close"] < mid_price(df)
-
-def in_premium(df):
-    last = df.iloc[-1]
-    return last["close"] > mid_price(df)
-
 # ================= ESTRUCTURA =================
 
 def bos(df):
@@ -42,11 +22,27 @@ def bos(df):
 
     if last["close"] > prev["high"]:
         return "bullish"
+
     if last["close"] < prev["low"]:
         return "bearish"
+
     return None
 
-# ================= PULLBACK =================
+# ================= LIQUIDEZ =================
+
+def liquidity_grab_up(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    return last["high"] > prev["high"] and last["close"] < prev["high"]
+
+def liquidity_grab_down(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    return last["low"] < prev["low"] and last["close"] > prev["low"]
+
+# ================= RETROCESO =================
 
 def pullback(df):
     c1 = df.iloc[-1]
@@ -60,31 +56,21 @@ def pullback(df):
 
     return None
 
-# ================= LIQUIDITY =================
+# ================= FILTRO =================
 
-def liquidity_grab_up(df):
+def not_overextended(df):
     last = df.iloc[-1]
-    prev = df.iloc[-2]
-    return last["high"] > prev["high"] and last["close"] < prev["high"]
+    avg = np.mean(df["high"] - df["low"])
 
-def liquidity_grab_down(df):
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-    return last["low"] < prev["low"] and last["close"] > prev["low"]
+    return range_c(last) < avg * 1.8
 
 # ================= SCORE =================
 
 def score_market(df1, df5):
     try:
-        score = 1
-
         if bos(df5):
-            score += 1
-
-        if not is_overextended(df1):
-            score += 1
-
-        return score
+            return 2
+        return 1
     except:
         return 0
 
@@ -92,31 +78,30 @@ def score_market(df1, df5):
 
 def get_signal(df1, df5):
     try:
-        last = df1.iloc[-1]
+        last = df5.iloc[-1]
 
         if range_c(last) == 0:
             return None
 
-        # ❌ evitar entrar tarde
-        if is_overextended(df1):
+        if not not_overextended(df5):
             return None
 
         structure = bos(df5)
 
-        # 🔥 REVERSIÓN (MEJORADA)
-        if liquidity_grab_up(df1) and in_premium(df1):
+        # 🔥 REVERSIÓN
+        if liquidity_grab_up(df5):
             return "put"
 
-        if liquidity_grab_down(df1) and in_discount(df1):
+        if liquidity_grab_down(df5):
             return "call"
 
         # 🔥 CONTINUIDAD CON RETROCESO
-        pb = pullback(df1)
+        pb = pullback(df5)
 
-        if structure == "bullish" and pb == "call" and in_discount(df1):
+        if structure == "bullish" and pb == "call":
             return "call"
 
-        if structure == "bearish" and pb == "put" and in_premium(df1):
+        if structure == "bearish" and pb == "put":
             return "put"
 
         return None
