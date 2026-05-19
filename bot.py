@@ -6,7 +6,7 @@ import sys
 import logging
 
 from iqoptionapi.stable_api import IQ_Option
-from strategy import get_signal, score_market
+from strategy import get_signal
 from risk import RiskManager
 
 logging.getLogger().setLevel(logging.CRITICAL)
@@ -19,7 +19,6 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 5
 BASE_AMOUNT = 470
-MAX_TRADES_PER_SIGNAL = 1
 
 TIMEFRAME_M5 = 300
 
@@ -87,7 +86,7 @@ def connect():
 
             if status:
                 iq.change_balance("PRACTICE")
-                send("🔥 BOT EURUSD M5 ACTIVO")
+                send("🔥 BOT CONTINUACIÓN ACTIVO")
                 return iq
         except:
             pass
