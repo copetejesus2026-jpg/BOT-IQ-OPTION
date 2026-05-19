@@ -17,43 +17,37 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-EXPIRATION = 1
-BASE_AMOUNT = 475
-MAX_TRADES_PER_CANDLE = 2
+EXPIRATION = 5
+BASE_AMOUNT = 470
+MAX_TRADES_PER_SIGNAL = 1
 
-TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
 
 BOT_ACTIVE = True
 LAST_UPDATE_ID = None
 
-PAIR_COOLDOWN = {}
+LOSS_STREAK = 0
+MAX_LOSSES = 3
+COOLDOWN_TIME = 300
+STOP_UNTIL = 0
 
-PAIRS = [
-    "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","AUDUSD-OTC",
-    "USDCAD-OTC","EURGBP-OTC","EURJPY-OTC","EURAUD-OTC",
-    "EURCHF-OTC","EURNZD-OTC","GBPJPY-OTC","GBPCHF-OTC","GBPAUD-OTC",
-    "GBPCAD-OTC","AUDJPY-OTC","AUDCAD-OTC","AUDCHF-OTC","NZDJPY-OTC",
-    "NZDCAD-OTC","EURTRY-OTC","USDTRY-OTC","USDZAR-OTC","EURZAR-OTC",
-    "USDNOK-OTC","USDSEK-OTC","EURSEK-OTC","EURNOK-OTC","GBPSEK-OTC"
-]
+PAIR = "EURUSD"
 
 # ================= TELEGRAM =================
 def send(msg):
-    if not TOKEN or not CHAT_ID:
-        return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg},
-            timeout=3
-        )
-    except:
-        pass
+    if TOKEN and CHAT_ID:
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                data={"chat_id": CHAT_ID, "text": msg},
+                timeout=3
+            )
+        except:
+            pass
 
 
-def check_telegram_commands():
-    global BOT_ACTIVE, LAST_UPDATE_ID
+def check_telegram():
+    global BOT_ACTIVE, LAST_UPDATE_ID, LOSS_STREAK
 
     if not TOKEN:
         return
@@ -67,16 +61,9 @@ def check_telegram_commands():
 
         res = requests.get(url, params=params, timeout=3).json()
 
-        for update in res.get("result", []):
-            LAST_UPDATE_ID = update["update_id"] + 1
-
-            message = update.get("message", {})
-            text = message.get("text", "")
-
-            if not text:
-                continue
-
-            text = text.lower()
+        for upd in res.get("result", []):
+            LAST_UPDATE_ID = upd["update_id"] + 1
+            text = upd.get("message", {}).get("text", "").lower()
 
             if text == "/stop":
                 BOT_ACTIVE = False
@@ -84,6 +71,7 @@ def check_telegram_commands():
 
             elif text == "/start":
                 BOT_ACTIVE = True
+                LOSS_STREAK = 0
                 send("✅ BOT ACTIVADO")
 
     except:
@@ -99,7 +87,7 @@ def connect():
 
             if status:
                 iq.change_balance("PRACTICE")
-                send("🔥 BOT HEDGE ACTIVO")
+                send("🔥 BOT EURUSD M5 ACTIVO")
                 return iq
         except:
             pass
@@ -107,10 +95,10 @@ def connect():
         time.sleep(3)
 
 
-# ================= DATOS =================
-def get_df(iq, pair, tf):
+# ================= DATA =================
+def get_df(iq):
     try:
-        data = iq.get_candles(pair, tf, 120, time.time())
+        data = iq.get_candles(PAIR, TIMEFRAME_M5, 120, time.time())
         df = pd.DataFrame(data)
 
         if df.empty:
@@ -125,83 +113,67 @@ def get_df(iq, pair, tf):
 
 # ================= MAIN =================
 def main():
+    global LOSS_STREAK, STOP_UNTIL
+
     iq = connect()
     risk = RiskManager()
 
     last_candle = None
-    cached_signals = []
 
     while True:
         try:
-            # 🔥 ESCUCHA TELEGRAM SIEMPRE
-            check_telegram_commands()
+            check_telegram()
 
-            # ⛔ SI ESTÁ DETENIDO, NO OPERA
+            now = time.time()
+
+            if now < STOP_UNTIL:
+                time.sleep(1)
+                continue
+
             if not BOT_ACTIVE:
                 time.sleep(1)
                 continue
 
             server_time = iq.get_server_timestamp()
-            sec = server_time % 60
+            candle = int(server_time // 300)
 
-            # ================= ANALISIS =================
-            if 50 <= sec <= 58:
-                cached_signals.clear()
-                ranked = []
+            if candle == last_candle:
+                time.sleep(1)
+                continue
 
-                for pair in PAIRS:
-                    df1 = get_df(iq, pair, TIMEFRAME_M1)
-                    df5 = get_df(iq, pair, TIMEFRAME_M5)
+            last_candle = candle
 
-                    if df1 is None or df5 is None:
-                        continue
+            df = get_df(iq)
 
-                    score = score_market(df1, df5)
-                    ranked.append((pair, score, df1, df5))
+            if df is None:
+                continue
 
-                ranked.sort(key=lambda x: x[1], reverse=True)
-                best = ranked[:3]
+            signal = get_signal(df, df)
 
-                for pair, _, df1, df5 in best:
+            if signal and risk.can_trade():
 
-                    last_trade = PAIR_COOLDOWN.get(pair, 0)
-                    if time.time() - last_trade < 120:
-                        continue
+                status, trade_id = iq.buy(BASE_AMOUNT, PAIR, signal, EXPIRATION)
 
-                    signal = get_signal(df1, df5)
+                if status:
+                    send(f"⚡ EURUSD {signal.upper()}")
 
-                    if signal:
-                        cached_signals.append((pair, signal))
+                    time.sleep(EXPIRATION * 60 + 2)
+                    result = iq.check_win_v4(trade_id)
 
-            # ================= ENTRADA =================
-            if sec >= 59.7 or sec <= 0.2:
-                candle = int(server_time // 60)
+                    if result < 0:
+                        LOSS_STREAK += 1
+                        send(f"❌ LOSS ({LOSS_STREAK})")
 
-                if candle == last_candle:
-                    continue
+                        if LOSS_STREAK >= MAX_LOSSES:
+                            STOP_UNTIL = time.time() + COOLDOWN_TIME
+                            LOSS_STREAK = 0
+                            send("🛑 PAUSA POR RACHA")
 
-                last_candle = candle
-                trades = 0
+                    else:
+                        LOSS_STREAK = 0
+                        send("✅ WIN")
 
-                for pair, signal in cached_signals:
-
-                    if not risk.can_trade():
-                        break
-
-                    status, _ = iq.buy(BASE_AMOUNT, pair, signal, EXPIRATION)
-
-                    if status:
-                        send(f"⚡ {pair} {signal.upper()}")
-                        PAIR_COOLDOWN[pair] = time.time()
-                        trades += 1
-                        risk.register_trade()
-
-                    if trades >= MAX_TRADES_PER_CANDLE:
-                        break
-
-                print(f"Trades: {trades}")
-
-            time.sleep(0.05)
+            time.sleep(1)
 
         except Exception as e:
             print("Error:", e)
