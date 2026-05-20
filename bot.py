@@ -19,7 +19,7 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 1
 BASE_AMOUNT = 4750
-MAX_TRADES_PER_CANDLE = 2
+MAX_TRADES_PER_CANDLE = 1  # 🔥 SOLO 1 TRADE
 
 TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
@@ -29,25 +29,26 @@ LAST_UPDATE_ID = None
 
 PAIR_COOLDOWN = {}
 
-# 🔥 MENOS PARES = MÁS PRECISIÓN
-PAIRS = [
-    "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC",
-    "AUDUSD-OTC","USDCAD-OTC","EURJPY-OTC",
-    "GBPJPY-OTC","GBPCHF-OTC"
-]
+# 🔥 MENOS PARES = MÁS EFECTIVIDAD
+PAIRS = ["EURUSD-OTC", "GBPUSD-OTC"]
+
+# 🔥 CONTROL DE RACHAS
+LOSS_STREAK = 0
+MAX_LOSS_STREAK = 3
+PAUSE_AFTER_LOSS = 180  # 3 minutos
+LAST_LOSS_TIME = 0
 
 # ================= TELEGRAM =================
 def send(msg):
-    if not TOKEN or not CHAT_ID:
-        return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg},
-            timeout=3
-        )
-    except:
-        pass
+    if TOKEN and CHAT_ID:
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                data={"chat_id": CHAT_ID, "text": msg},
+                timeout=3
+            )
+        except:
+            pass
 
 
 def check_telegram_commands():
@@ -68,13 +69,7 @@ def check_telegram_commands():
         for update in res.get("result", []):
             LAST_UPDATE_ID = update["update_id"] + 1
 
-            message = update.get("message", {})
-            text = message.get("text", "")
-
-            if not text:
-                continue
-
-            text = text.lower()
+            text = update.get("message", {}).get("text", "").lower()
 
             if text == "/stop":
                 BOT_ACTIVE = False
@@ -97,7 +92,7 @@ def connect():
 
             if status:
                 iq.change_balance("PRACTICE")
-                send("🔥 BOT PRO ACTIVO")
+                send("🔥 BOT ULTRA ACTIVO")
                 return iq
         except:
             pass
@@ -123,6 +118,8 @@ def get_df(iq, pair, tf):
 
 # ================= MAIN =================
 def main():
+    global LOSS_STREAK, LAST_LOSS_TIME
+
     iq = connect()
     risk = RiskManager()
 
@@ -137,14 +134,19 @@ def main():
                 time.sleep(1)
                 continue
 
+            # 🔥 PAUSA POR RACHAS
+            if LOSS_STREAK >= MAX_LOSS_STREAK:
+                if time.time() - LAST_LOSS_TIME < PAUSE_AFTER_LOSS:
+                    continue
+                else:
+                    LOSS_STREAK = 0
+
             server_time = iq.get_server_timestamp()
             sec = server_time % 60
 
             # ================= ANALISIS =================
-            # 🔥 MEJOR TIMING
             if 40 <= sec <= 55:
                 cached_signals.clear()
-                ranked = []
 
                 for pair in PAIRS:
                     df1 = get_df(iq, pair, TIMEFRAME_M1)
@@ -155,19 +157,7 @@ def main():
 
                     score = score_market(df1, df5)
 
-                    # 🔥 FILTRO DE CALIDAD
-                    if score < 3:
-                        continue
-
-                    ranked.append((pair, score, df1, df5))
-
-                ranked.sort(key=lambda x: x[1], reverse=True)
-                best = ranked[:3]
-
-                for pair, _, df1, df5 in best:
-
-                    last_trade = PAIR_COOLDOWN.get(pair, 0)
-                    if time.time() - last_trade < 120:
+                    if score < 4:  # 🔥 ULTRA FILTRO
                         continue
 
                     signal = get_signal(df1, df5)
@@ -183,25 +173,32 @@ def main():
                     continue
 
                 last_candle = candle
-                trades = 0
 
-                for pair, signal in cached_signals:
+                if not cached_signals:
+                    continue
 
-                    if not risk.can_trade():
-                        break
+                pair, signal = cached_signals[0]
 
-                    status, _ = iq.buy(BASE_AMOUNT, pair, signal, EXPIRATION)
+                if not risk.can_trade():
+                    continue
 
-                    if status:
-                        send(f"⚡ {pair} {signal.upper()}")
-                        PAIR_COOLDOWN[pair] = time.time()
-                        trades += 1
-                        risk.register_trade()
+                status, trade_id = iq.buy(BASE_AMOUNT, pair, signal, EXPIRATION)
 
-                    if trades >= MAX_TRADES_PER_CANDLE:
-                        break
+                if status:
+                    send(f"⚡ {pair} {signal.upper()}")
+                    risk.register_trade()
 
-                print(f"Trades: {trades}")
+                    # 🔥 ESPERAR RESULTADO
+                    time.sleep(65)
+                    result = iq.check_win_v4(trade_id)
+
+                    if result < 0:
+                        LOSS_STREAK += 1
+                        LAST_LOSS_TIME = time.time()
+                        send(f"❌ LOSS | Racha: {LOSS_STREAK}")
+                    else:
+                        LOSS_STREAK = 0
+                        send("✅ WIN")
 
             time.sleep(0.05)
 
