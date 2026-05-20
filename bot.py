@@ -19,18 +19,16 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 1
 BASE_AMOUNT = 4750
-MAX_TRADES_PER_CANDLE = 1
 
 TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
 
-# 🔥 SOLO LOS MEJORES
-PAIRS = ["EURUSD-OTC", "GBPUSD-OTC"]
+PAIRS = ["EURUSD-OTC", "GBPUSD-OTC", "USDCHF-OTC"]
 
 LOSS_STREAK = 0
-MAX_LOSS_STREAK = 3
-PAUSE_AFTER_LOSS = 180
-LAST_LOSS_TIME = 0
+MAX_LOSS_STREAK = 2
+PAUSE_TIME = 300
+LAST_LOSS = 0
 
 def send(msg):
     if TOKEN and CHAT_ID:
@@ -51,7 +49,7 @@ def connect():
 
             if status:
                 iq.change_balance("PRACTICE")
-                send("🔥 BOT PRO ACTIVO")
+                send("🔥 BOT PRO M1 ACTIVO")
                 return iq
         except:
             pass
@@ -71,19 +69,19 @@ def get_df(iq, pair, tf):
         return None
 
 def main():
-    global LOSS_STREAK, LAST_LOSS_TIME
+    global LOSS_STREAK, LAST_LOSS
 
     iq = connect()
     risk = RiskManager()
 
     last_candle = None
-    cached_signal = None
+    signal = None
 
     while True:
         try:
-            # 🔥 PAUSA SI PIERDE MUCHO
+            # ⛔ BLOQUEO POR RACHA
             if LOSS_STREAK >= MAX_LOSS_STREAK:
-                if time.time() - LAST_LOSS_TIME < PAUSE_AFTER_LOSS:
+                if time.time() - LAST_LOSS < PAUSE_TIME:
                     continue
                 else:
                     LOSS_STREAK = 0
@@ -92,8 +90,8 @@ def main():
             sec = server_time % 60
 
             # 🔍 ANALISIS
-            if 40 <= sec <= 55:
-                cached_signal = None
+            if 45 <= sec <= 58:
+                signal = None
 
                 for pair in PAIRS:
                     df1 = get_df(iq, pair, TIMEFRAME_M1)
@@ -102,15 +100,13 @@ def main():
                     if df1 is None or df5 is None:
                         continue
 
-                    score = score_market(df1, df5)
-
-                    if score < 4:
+                    if score_market(df1, df5) < 4:
                         continue
 
-                    signal = get_signal(df1, df5)
+                    s = get_signal(df1, df5)
 
-                    if signal:
-                        cached_signal = (pair, signal)
+                    if s:
+                        signal = (pair, s)
                         break
 
             # 🎯 ENTRADA
@@ -122,18 +118,18 @@ def main():
 
                 last_candle = candle
 
-                if not cached_signal:
+                if not signal:
                     continue
 
-                pair, signal = cached_signal
+                pair, direction = signal
 
                 if not risk.can_trade():
                     continue
 
-                status, trade_id = iq.buy(BASE_AMOUNT, pair, signal, EXPIRATION)
+                status, trade_id = iq.buy(BASE_AMOUNT, pair, direction, EXPIRATION)
 
                 if status:
-                    send(f"⚡ {pair} {signal.upper()}")
+                    send(f"⚡ {pair} {direction.upper()}")
                     risk.register_trade()
 
                     time.sleep(65)
@@ -141,7 +137,7 @@ def main():
 
                     if result < 0:
                         LOSS_STREAK += 1
-                        LAST_LOSS_TIME = time.time()
+                        LAST_LOSS = time.time()
                         send(f"❌ LOSS {LOSS_STREAK}")
                     else:
                         LOSS_STREAK = 0
