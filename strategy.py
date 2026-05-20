@@ -22,7 +22,7 @@ def strong_bullish(c):
 def strong_bearish(c):
     return bearish(c) and body(c) > range_c(c) * 0.6
 
-# ================= ESTRUCTURA =================
+# ================= TENDENCIA =================
 
 def trend(df):
     highs = df["high"].values
@@ -36,58 +36,40 @@ def trend(df):
 
     return None
 
-# ================= RETROCESO (CLAVE) =================
+# ================= MOMENTUM =================
 
-def pullback(df):
+def bullish_momentum(df):
     c1 = df.iloc[-1]
     c2 = df.iloc[-2]
+    c3 = df.iloc[-3]
 
-    # retroceso contra tendencia
-    if bullish(c2) and bearish(c1):
-        return "bearish_pullback"
+    return strong_bullish(c1) and bullish(c2) and bullish(c3)
 
-    if bearish(c2) and bullish(c1):
-        return "bullish_pullback"
+def bearish_momentum(df):
+    c1 = df.iloc[-1]
+    c2 = df.iloc[-2]
+    c3 = df.iloc[-3]
 
-    return None
+    return strong_bearish(c1) and bearish(c2) and bearish(c3)
 
-# ================= AGOTAMIENTO =================
-
-def is_exhausted(df):
-    moves = df["close"].diff().dropna()
-    consecutive = (moves > 0).astype(int).groupby((moves <= 0).cumsum()).sum().max()
-
-    return consecutive >= 4  # muchas velas seguidas
-
-# ================= ZONAS =================
-
-def equilibrium(df):
-    return (df["high"].max() + df["low"].min()) / 2
-
-def in_premium(df):
-    return df.iloc[-1]["close"] > equilibrium(df)
-
-def in_discount(df):
-    return df.iloc[-1]["close"] < equilibrium(df)
-
-# ================= FILTROS =================
-
-def is_ranging(df):
-    return (df["high"].max() - df["low"].min()) < np.mean(df["high"] - df["low"]) * 5
+# ================= EXTENSION =================
 
 def is_overextended(df):
     last = df.iloc[-1]
     avg = np.mean(df["high"] - df["low"])
-    return range_c(last) > avg * 1.7
+    return range_c(last) > avg * 1.8
+
+# ================= RANGO =================
+
+def is_ranging(df):
+    return (df["high"].max() - df["low"].min()) < np.mean(df["high"] - df["low"]) * 4
 
 # ================= SCORE =================
 
 def score_market(df1, df5):
     score = 0
 
-    t = trend(df5)
-
-    if t:
+    if trend(df5):
         score += 2
 
     if not is_ranging(df5):
@@ -98,12 +80,10 @@ def score_market(df1, df5):
 
     return score
 
-# ================= ENTRADA FINAL =================
+# ================= ENTRADA =================
 
 def get_signal(df1, df5):
     try:
-        last = df1.iloc[-1]
-
         if is_ranging(df5):
             return None
 
@@ -111,20 +91,16 @@ def get_signal(df1, df5):
             return None
 
         t = trend(df5)
-        pb = pullback(df1)
 
-        # ❌ evitar vender en suelo / comprar en techo
-        if is_exhausted(df1):
-            return None
-
-        # ================= CONTINUIDAD CON RETROCESO =================
+        # 🟢 CONTINUIDAD CORTA (como tu imagen)
         if t == "bearish":
-            if pb == "bullish_pullback" and strong_bearish(last) and in_premium(df1):
-                return "put"
-
-        if t == "bullish":
-            if pb == "bearish_pullback" and strong_bullish(last) and in_discount(df1):
+            if bullish_momentum(df1):
                 return "call"
+
+        # 🔴 CONTINUIDAD CORTA
+        if t == "bullish":
+            if bearish_momentum(df1):
+                return "put"
 
         return None
 
