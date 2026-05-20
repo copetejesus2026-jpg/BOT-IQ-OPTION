@@ -32,10 +32,7 @@ PAIR_COOLDOWN = {}
 PAIRS = [
     "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","AUDUSD-OTC",
     "USDCAD-OTC","EURGBP-OTC","EURJPY-OTC","EURAUD-OTC",
-    "EURCHF-OTC","EURNZD-OTC","GBPJPY-OTC","GBPCHF-OTC","GBPAUD-OTC",
-    "GBPCAD-OTC","AUDJPY-OTC","AUDCAD-OTC","AUDCHF-OTC","NZDJPY-OTC",
-    "NZDCAD-OTC","EURTRY-OTC","USDTRY-OTC","USDZAR-OTC","EURZAR-OTC",
-    "USDNOK-OTC","USDSEK-OTC","EURSEK-OTC","EURNOK-OTC","GBPSEK-OTC"
+    "EURCHF-OTC","EURNZD-OTC","GBPJPY-OTC","GBPCHF-OTC"
 ]
 
 # ================= TELEGRAM =================
@@ -99,7 +96,7 @@ def connect():
 
             if status:
                 iq.change_balance("PRACTICE")
-                send("🔥 BOT HEDGE ACTIVO")
+                send("🔥 BOT PRO ACTIVO")
                 return iq
         except:
             pass
@@ -133,10 +130,8 @@ def main():
 
     while True:
         try:
-            # 🔥 ESCUCHA TELEGRAM SIEMPRE
             check_telegram_commands()
 
-            # ⛔ SI ESTÁ DETENIDO, NO OPERA
             if not BOT_ACTIVE:
                 time.sleep(1)
                 continue
@@ -145,7 +140,7 @@ def main():
             sec = server_time % 60
 
             # ================= ANALISIS =================
-            if 50 <= sec <= 58:
+            if 45 <= sec <= 55:
                 cached_signals.clear()
                 ranked = []
 
@@ -174,7 +169,7 @@ def main():
                         cached_signals.append((pair, signal))
 
             # ================= ENTRADA =================
-            if sec >= 59.7 or sec <= 0.2:
+            if sec >= 59.5 or sec <= 0.3:
                 candle = int(server_time // 60)
 
                 if candle == last_candle:
