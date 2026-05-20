@@ -29,10 +29,11 @@ LAST_UPDATE_ID = None
 
 PAIR_COOLDOWN = {}
 
+# 🔥 MENOS PARES = MÁS PRECISIÓN
 PAIRS = [
-    "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","AUDUSD-OTC",
-    "USDCAD-OTC","EURGBP-OTC","EURJPY-OTC","EURAUD-OTC",
-    "EURCHF-OTC","EURNZD-OTC","GBPJPY-OTC","GBPCHF-OTC"
+    "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC",
+    "AUDUSD-OTC","USDCAD-OTC","EURJPY-OTC",
+    "GBPJPY-OTC","GBPCHF-OTC"
 ]
 
 # ================= TELEGRAM =================
@@ -140,7 +141,8 @@ def main():
             sec = server_time % 60
 
             # ================= ANALISIS =================
-            if 45 <= sec <= 55:
+            # 🔥 MEJOR TIMING
+            if 40 <= sec <= 55:
                 cached_signals.clear()
                 ranked = []
 
@@ -152,6 +154,11 @@ def main():
                         continue
 
                     score = score_market(df1, df5)
+
+                    # 🔥 FILTRO DE CALIDAD
+                    if score < 3:
+                        continue
+
                     ranked.append((pair, score, df1, df5))
 
                 ranked.sort(key=lambda x: x[1], reverse=True)
