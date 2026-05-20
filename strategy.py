@@ -14,9 +14,17 @@ def bullish(c):
 def bearish(c):
     return c["close"] < c["open"]
 
-# ================= ESTRUCTURA REAL =================
+# ================= FUERZA =================
 
-def structure_trend(df):
+def strong_bullish(c):
+    return bullish(c) and body(c) > range_c(c) * 0.65
+
+def strong_bearish(c):
+    return bearish(c) and body(c) > range_c(c) * 0.65
+
+# ================= ESTRUCTURA =================
+
+def trend(df):
     highs = df["high"].values
     lows = df["low"].values
 
@@ -28,53 +36,53 @@ def structure_trend(df):
 
     return None
 
-# ================= FILTROS =================
-
-def is_strong_candle(c):
-    return body(c) > (range_c(c) * 0.6)
-
-def is_overextended(df):
-    last = df.iloc[-1]
-    avg = np.mean(df["high"] - df["low"])
-    return range_c(last) > avg * 1.5
-
-def market_range(df):
-    return (df["high"].max() - df["low"].min())
-
-def is_ranging(df):
-    return market_range(df) < np.mean(df["high"] - df["low"]) * 6
-
 # ================= ZONAS =================
 
 def equilibrium(df):
     return (df["high"].max() + df["low"].min()) / 2
 
-def in_discount(df):
-    return df.iloc[-1]["close"] < equilibrium(df)
-
 def in_premium(df):
     return df.iloc[-1]["close"] > equilibrium(df)
 
-# ================= LIQUIDITY =================
+def in_discount(df):
+    return df.iloc[-1]["close"] < equilibrium(df)
 
-def liquidity_sweep_high(df):
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-    return last["high"] > prev["high"] and last["close"] < prev["high"]
+# ================= FILTROS =================
 
-def liquidity_sweep_low(df):
+def is_ranging(df):
+    return (df["high"].max() - df["low"].min()) < np.mean(df["high"] - df["low"]) * 5
+
+def is_overextended(df):
     last = df.iloc[-1]
-    prev = df.iloc[-2]
-    return last["low"] < prev["low"] and last["close"] > prev["low"]
+    avg = np.mean(df["high"] - df["low"])
+    return range_c(last) > avg * 1.7
+
+# ================= LIQUIDEZ + RECHAZO =================
+
+def rejection_upper(df):
+    c = df.iloc[-1]
+    wick = c["high"] - max(c["close"], c["open"])
+    return wick > body(c) * 1.5
+
+def rejection_lower(df):
+    c = df.iloc[-1]
+    wick = min(c["close"], c["open"]) - c["low"]
+    return wick > body(c) * 1.5
+
+def sweep_high(df):
+    return df.iloc[-1]["high"] > df.iloc[-2]["high"]
+
+def sweep_low(df):
+    return df.iloc[-1]["low"] < df.iloc[-2]["low"]
 
 # ================= SCORE =================
 
 def score_market(df1, df5):
     score = 0
 
-    trend = structure_trend(df5)
+    t = trend(df5)
 
-    if trend:
+    if t:
         score += 2
 
     if not is_ranging(df5):
@@ -85,39 +93,34 @@ def score_market(df1, df5):
 
     return score
 
-# ================= SEÑAL =================
+# ================= SEÑAL ULTRA =================
 
 def get_signal(df1, df5):
     try:
         last = df1.iloc[-1]
-        prev = df1.iloc[-2]
 
-        if range_c(last) == 0:
-            return None
-
-        # ❌ evitar mercado feo
         if is_ranging(df5):
             return None
 
         if is_overextended(df1):
             return None
 
-        trend = structure_trend(df5)
+        t = trend(df5)
 
-        # ================= REVERSIÓN PRO =================
-        if liquidity_sweep_high(df1) and in_premium(df1) and bearish(last):
+        # 🔴 REVERSIÓN ULTRA FILTRADA
+        if sweep_high(df1) and rejection_upper(df1) and in_premium(df1) and strong_bearish(last):
             return "put"
 
-        if liquidity_sweep_low(df1) and in_discount(df1) and bullish(last):
+        if sweep_low(df1) and rejection_lower(df1) and in_discount(df1) and strong_bullish(last):
             return "call"
 
-        # ================= CONTINUIDAD PRO =================
-        if trend == "bullish":
-            if in_discount(df1) and bullish(last) and is_strong_candle(last):
+        # 🟢 CONTINUIDAD ULTRA LIMPIA
+        if t == "bullish":
+            if in_discount(df1) and strong_bullish(last):
                 return "call"
 
-        if trend == "bearish":
-            if in_premium(df1) and bearish(last) and is_strong_candle(last):
+        if t == "bearish":
+            if in_premium(df1) and strong_bearish(last):
                 return "put"
 
         return None
