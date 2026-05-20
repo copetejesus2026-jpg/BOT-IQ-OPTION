@@ -18,16 +18,13 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 1
-BASE_AMOUNT = 4759
+BASE_AMOUNT = 4750
 MAX_TRADES_PER_CANDLE = 1
 
 TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
 
-BOT_ACTIVE = True
-LAST_UPDATE_ID = None
-
-# 🔥 SOLO LOS MEJORES PARES
+# 🔥 SOLO LOS MEJORES
 PAIRS = ["EURUSD-OTC", "GBPUSD-OTC"]
 
 LOSS_STREAK = 0
@@ -54,7 +51,7 @@ def connect():
 
             if status:
                 iq.change_balance("PRACTICE")
-                send("🔥 BOT PRO FINAL ACTIVO")
+                send("🔥 BOT PRO ACTIVO")
                 return iq
         except:
             pass
@@ -84,6 +81,7 @@ def main():
 
     while True:
         try:
+            # 🔥 PAUSA SI PIERDE MUCHO
             if LOSS_STREAK >= MAX_LOSS_STREAK:
                 if time.time() - LAST_LOSS_TIME < PAUSE_AFTER_LOSS:
                     continue
@@ -93,7 +91,7 @@ def main():
             server_time = iq.get_server_timestamp()
             sec = server_time % 60
 
-            # 🔥 ANALISIS
+            # 🔍 ANALISIS
             if 40 <= sec <= 55:
                 cached_signal = None
 
@@ -115,7 +113,7 @@ def main():
                         cached_signal = (pair, signal)
                         break
 
-            # 🔥 ENTRADA
+            # 🎯 ENTRADA
             if sec >= 59.5 or sec <= 0.3:
                 candle = int(server_time // 60)
 
