@@ -17,10 +17,10 @@ def bearish(c):
 # ================= FUERZA =================
 
 def strong_bullish(c):
-    return bullish(c) and body(c) > range_c(c) * 0.65
+    return bullish(c) and body(c) > range_c(c) * 0.6
 
 def strong_bearish(c):
-    return bearish(c) and body(c) > range_c(c) * 0.65
+    return bearish(c) and body(c) > range_c(c) * 0.6
 
 # ================= ESTRUCTURA =================
 
@@ -35,6 +35,29 @@ def trend(df):
         return "bearish"
 
     return None
+
+# ================= RETROCESO (CLAVE) =================
+
+def pullback(df):
+    c1 = df.iloc[-1]
+    c2 = df.iloc[-2]
+
+    # retroceso contra tendencia
+    if bullish(c2) and bearish(c1):
+        return "bearish_pullback"
+
+    if bearish(c2) and bullish(c1):
+        return "bullish_pullback"
+
+    return None
+
+# ================= AGOTAMIENTO =================
+
+def is_exhausted(df):
+    moves = df["close"].diff().dropna()
+    consecutive = (moves > 0).astype(int).groupby((moves <= 0).cumsum()).sum().max()
+
+    return consecutive >= 4  # muchas velas seguidas
 
 # ================= ZONAS =================
 
@@ -57,24 +80,6 @@ def is_overextended(df):
     avg = np.mean(df["high"] - df["low"])
     return range_c(last) > avg * 1.7
 
-# ================= LIQUIDEZ + RECHAZO =================
-
-def rejection_upper(df):
-    c = df.iloc[-1]
-    wick = c["high"] - max(c["close"], c["open"])
-    return wick > body(c) * 1.5
-
-def rejection_lower(df):
-    c = df.iloc[-1]
-    wick = min(c["close"], c["open"]) - c["low"]
-    return wick > body(c) * 1.5
-
-def sweep_high(df):
-    return df.iloc[-1]["high"] > df.iloc[-2]["high"]
-
-def sweep_low(df):
-    return df.iloc[-1]["low"] < df.iloc[-2]["low"]
-
 # ================= SCORE =================
 
 def score_market(df1, df5):
@@ -93,7 +98,7 @@ def score_market(df1, df5):
 
     return score
 
-# ================= SEÑAL ULTRA =================
+# ================= ENTRADA FINAL =================
 
 def get_signal(df1, df5):
     try:
@@ -106,22 +111,20 @@ def get_signal(df1, df5):
             return None
 
         t = trend(df5)
+        pb = pullback(df1)
 
-        # 🔴 REVERSIÓN ULTRA FILTRADA
-        if sweep_high(df1) and rejection_upper(df1) and in_premium(df1) and strong_bearish(last):
-            return "put"
+        # ❌ evitar vender en suelo / comprar en techo
+        if is_exhausted(df1):
+            return None
 
-        if sweep_low(df1) and rejection_lower(df1) and in_discount(df1) and strong_bullish(last):
-            return "call"
-
-        # 🟢 CONTINUIDAD ULTRA LIMPIA
-        if t == "bullish":
-            if in_discount(df1) and strong_bullish(last):
-                return "call"
-
+        # ================= CONTINUIDAD CON RETROCESO =================
         if t == "bearish":
-            if in_premium(df1) and strong_bearish(last):
+            if pb == "bullish_pullback" and strong_bearish(last) and in_premium(df1):
                 return "put"
+
+        if t == "bullish":
+            if pb == "bearish_pullback" and strong_bullish(last) and in_discount(df1):
+                return "call"
 
         return None
 
