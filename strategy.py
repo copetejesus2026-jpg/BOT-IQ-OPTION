@@ -2,111 +2,129 @@ import numpy as np
 
 # ================= BASICOS =================
 
+def body(c):
+    return abs(c["close"] - c["open"])
+
 def range_c(c):
     return c["high"] - c["low"]
 
-# ================= TENDENCIA M5 =================
+def bullish(c):
+    return c["close"] > c["open"]
 
-def trend_m5(df):
+def bearish(c):
+    return c["close"] < c["open"]
+
+# ================= FUERZA =================
+
+def strong_bull(c):
+    return bullish(c) and body(c) > range_c(c) * 0.6
+
+def strong_bear(c):
+    return bearish(c) and body(c) > range_c(c) * 0.6
+
+# ================= TENDENCIA =================
+
+def trend(df):
     highs = df["high"].values
     lows = df["low"].values
 
-    if highs[-1] > highs[-2] > highs[-3] and lows[-1] > lows[-2] > lows[-3]:
+    if highs[-1] > highs[-2] and lows[-1] > lows[-2]:
         return "bullish"
 
-    if highs[-1] < highs[-2] < highs[-3] and lows[-1] < lows[-2] < lows[-3]:
+    if highs[-1] < highs[-2] and lows[-1] < lows[-2]:
         return "bearish"
 
     return None
 
-# ================= IMPULSO =================
+# ================= ZONAS =================
 
-def strong_impulse(df):
+def mid_price(df):
+    return (df["high"].max() + df["low"].min()) / 2
+
+def in_discount(df):
+    return df.iloc[-1]["close"] < mid_price(df)
+
+def in_premium(df):
+    return df.iloc[-1]["close"] > mid_price(df)
+
+# ================= FILTROS =================
+
+def is_ranging(df):
+    return (df["high"].max() - df["low"].min()) < np.mean(df["high"] - df["low"]) * 3
+
+def is_overextended(df):
     last = df.iloc[-1]
     avg = np.mean(df["high"] - df["low"])
-    return range_c(last) > avg * 1.5
+    return range_c(last) > avg * 1.8
 
-# ================= SOBREEXTENSION =================
-
-def overextended(df):
-    last = df.iloc[-1]
-    avg = np.mean(df["high"] - df["low"])
-    return range_c(last) > avg * 2
-
-# ================= LIQUIDITY (STOP HUNT) =================
-
-def liquidity_sweep_high(df):
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-    return last["high"] > prev["high"] and last["close"] < prev["high"]
-
-def liquidity_sweep_low(df):
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-    return last["low"] < prev["low"] and last["close"] > prev["low"]
-
-# ================= PULLBACK =================
+# ================= PULLBACK REAL =================
 
 def valid_pullback(df):
     c1 = df.iloc[-1]
     c2 = df.iloc[-2]
     c3 = df.iloc[-3]
 
-    return (
-        (c2["close"] < c3["close"] and c1["close"] > c2["close"]) or
-        (c2["close"] > c3["close"] and c1["close"] < c2["close"])
-    )
+    return body(c2) < body(c3) and body(c1) > body(c2)
 
-# ================= CONFIRMACION =================
+# ================= RECHAZO =================
 
-def confirmation_candle(df):
-    c1 = df.iloc[-1]
-    c2 = df.iloc[-2]
+def rejection_up(df):
+    c = df.iloc[-1]
+    return bearish(c) and (c["high"] - max(c["open"], c["close"])) > body(c)
 
-    # vela confirma dirección
-    return (
-        (c1["close"] > c1["open"] and c2["close"] < c2["open"]) or
-        (c1["close"] < c1["open"] and c2["close"] > c2["open"])
-    )
+def rejection_down(df):
+    c = df.iloc[-1]
+    return bullish(c) and (min(c["open"], c["close"]) - c["low"]) > body(c)
 
-# ================= LATERAL =================
+# ================= SCORE =================
 
-def is_lateral(df):
-    highs = df["high"].values
-    lows = df["low"].values
-    return abs(highs[-1] - highs[-5]) < 0.0003
+def score_market(df1, df5):
+    score = 0
 
-# ================= SEÑAL FINAL =================
+    if trend(df5):
+        score += 2
+
+    if not is_ranging(df5):
+        score += 2
+
+    if not is_overextended(df1):
+        score += 1
+
+    return score
+
+# ================= ENTRADA PRO =================
 
 def get_signal(df1, df5):
     try:
-        trend = trend_m5(df5)
-
-        if trend is None:
+        if is_ranging(df5):
             return None
 
-        if is_lateral(df1):
+        if is_overextended(df1):
             return None
 
-        if overextended(df1):
-            return None
+        t = trend(df5)
 
-        if not strong_impulse(df1):
-            return None
+        # ================= VENTAS (ZONA PREMIUM) =================
 
-        if not valid_pullback(df1):
-            return None
+        if t == "bullish" and in_premium(df5):
+            if rejection_up(df1):
+                return "put"
 
-        if not confirmation_candle(df1):
-            return None
+        # ================= COMPRAS (ZONA DISCOUNT) =================
 
-        # 🔥 LIQUIDEZ + CONTINUIDAD
+        if t == "bearish" and in_discount(df5):
+            if rejection_down(df1):
+                return "call"
 
-        if trend == "bullish" and liquidity_sweep_low(df1):
-            return "call"
+        # ================= CONTINUACION =================
 
-        if trend == "bearish" and liquidity_sweep_high(df1):
-            return "put"
+        if t == "bullish" and in_discount(df5):
+            if valid_pullback(df1) and strong_bull(df1.iloc[-1]):
+                return "call"
+
+        if t == "bearish" and in_premium(df5):
+            if valid_pullback(df1) and strong_bear(df1.iloc[-1]):
+                return "put"
 
         return None
 
