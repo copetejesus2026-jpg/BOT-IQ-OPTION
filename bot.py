@@ -4,6 +4,7 @@ import requests
 import pandas as pd
 import sys
 import logging
+from datetime import datetime
 
 from iqoptionapi.stable_api import IQ_Option
 from strategy import get_signal, score_market
@@ -18,12 +19,16 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 1
-BASE_AMOUNT = 4750
+BASE_AMOUNT = 6700
 
 TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
 
 PAIRS = ["EURUSD-OTC", "GBPUSD-OTC", "USDCHF-OTC"]
+
+DAILY_TRADES = 0
+MAX_DAILY_TRADES = 4
+CURRENT_DAY = datetime.utcnow().day
 
 LOSS_STREAK = 0
 MAX_LOSS_STREAK = 2
@@ -41,15 +46,20 @@ def send(msg):
         except:
             pass
 
+def reset_day():
+    global DAILY_TRADES, CURRENT_DAY
+    if datetime.utcnow().day != CURRENT_DAY:
+        DAILY_TRADES = 0
+        CURRENT_DAY = datetime.utcnow().day
+
 def connect():
     while True:
         try:
             iq = IQ_Option(EMAIL, PASSWORD)
             status, _ = iq.connect()
-
             if status:
                 iq.change_balance("PRACTICE")
-                send("🔥 BOT PRO M1 ACTIVO")
+                send("🔥 BOT INSTITUCIONAL ACTIVO")
                 return iq
         except:
             pass
@@ -59,17 +69,15 @@ def get_df(iq, pair, tf):
     try:
         data = iq.get_candles(pair, tf, 120, time.time())
         df = pd.DataFrame(data)
-
         if df.empty:
             return None
-
         df.rename(columns={"max": "high", "min": "low"}, inplace=True)
         return df
     except:
         return None
 
 def main():
-    global LOSS_STREAK, LAST_LOSS
+    global LOSS_STREAK, LAST_LOSS, DAILY_TRADES
 
     iq = connect()
     risk = RiskManager()
@@ -79,7 +87,12 @@ def main():
 
     while True:
         try:
-            # ⛔ BLOQUEO POR RACHA
+            reset_day()
+
+            if DAILY_TRADES >= MAX_DAILY_TRADES:
+                time.sleep(5)
+                continue
+
             if LOSS_STREAK >= MAX_LOSS_STREAK:
                 if time.time() - LAST_LOSS < PAUSE_TIME:
                     continue
@@ -89,9 +102,13 @@ def main():
             server_time = iq.get_server_timestamp()
             sec = server_time % 60
 
-            # 🔍 ANALISIS
+            # 🔍 ANALISIS ULTRA FILTRADO
             if 45 <= sec <= 58:
                 signal = None
+
+                best_score = 0
+                best_pair = None
+                best_signal = None
 
                 for pair in PAIRS:
                     df1 = get_df(iq, pair, TIMEFRAME_M1)
@@ -100,16 +117,22 @@ def main():
                     if df1 is None or df5 is None:
                         continue
 
-                    if score_market(df1, df5) < 4:
+                    score = score_market(df1, df5)
+
+                    if score < 5:
                         continue
 
                     s = get_signal(df1, df5)
 
-                    if s:
-                        signal = (pair, s)
-                        break
+                    if s and score > best_score:
+                        best_score = score
+                        best_pair = pair
+                        best_signal = s
 
-            # 🎯 ENTRADA
+                if best_pair:
+                    signal = (best_pair, best_signal)
+
+            # 🎯 ENTRADA PERFECT TIMING
             if sec >= 59.5 or sec <= 0.3:
                 candle = int(server_time // 60)
 
@@ -129,7 +152,8 @@ def main():
                 status, trade_id = iq.buy(BASE_AMOUNT, pair, direction, EXPIRATION)
 
                 if status:
-                    send(f"⚡ {pair} {direction.upper()}")
+                    DAILY_TRADES += 1
+                    send(f"⚡ {pair} {direction.upper()} ({DAILY_TRADES}/4)")
                     risk.register_trade()
 
                     time.sleep(65)
