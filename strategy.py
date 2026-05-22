@@ -82,13 +82,13 @@ def score_market(df1, df5):
     score = 0
 
     if trend(df5):
-        score += 2
+        score += 3
 
     if not is_ranging(df5):
-        score += 2
+        score += 3
 
     if not is_overextended(df1):
-        score += 1
+        score += 2
 
     return score
 
