@@ -18,38 +18,27 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-EXPIRATION = 2
+EXPIRATION = 1
 BASE_AMOUNT = 20000
 
 TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
+TIMEFRAME_M15 = 900  # ✅ NUEVO
 
 PAIRS = [
-    "EURUSD-OTC",
-    "GBPUSD-OTC",
-    "USDCHF-OTC",
-    "EURGBP-OTC",
-    "EURJPY-OTC",
-    "GBPJPY-OTC",
-    "USDJPY-OTC",
-    "AUDUSD-OTC",
-    "USDCAD-OTC",
-    "NZDUSD-OTC",
-    "EURCAD-OTC",
-    "GBPCAD-OTC",
-    "AUDJPY-OTC",
-    "CADJPY-OTC",
-    "CHFJPY-OTC"
+    "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","EURGBP-OTC","EURJPY-OTC",
+    "GBPJPY-OTC","USDJPY-OTC","AUDUSD-OTC","USDCAD-OTC","NZDUSD-OTC",
+    "EURCAD-OTC","GBPCAD-OTC","AUDJPY-OTC","CADJPY-OTC","CHFJPY-OTC"
 ]
-
-DAILY_TRADES = 0
-MAX_DAILY_TRADES = 3
-CURRENT_DAY = datetime.utcnow().day
 
 LOSS_STREAK = 0
 MAX_LOSS_STREAK = 1
 PAUSE_TIME = 300
 LAST_LOSS = 0
+
+# 🔥 CONTROL DE FRECUENCIA (ANTI SOBREOPERAR)
+LAST_TRADE_TIME = 0
+MIN_TRADE_GAP = 180  # 3 minutos
 
 def send(msg):
     if TOKEN and CHAT_ID:
@@ -62,12 +51,6 @@ def send(msg):
         except:
             pass
 
-def reset_day():
-    global DAILY_TRADES, CURRENT_DAY
-    if datetime.utcnow().day != CURRENT_DAY:
-        DAILY_TRADES = 0
-        CURRENT_DAY = datetime.utcnow().day
-
 def connect():
     while True:
         try:
@@ -75,7 +58,7 @@ def connect():
             status, _ = iq.connect()
             if status:
                 iq.change_balance("PRACTICE")
-                send("🔥 BOT INSTITUCIONAL ACTIVO")
+                send("🔥 BOT PRO ACTIVO")
                 return iq
         except:
             pass
@@ -85,15 +68,17 @@ def get_df(iq, pair, tf):
     try:
         data = iq.get_candles(pair, tf, 120, time.time())
         df = pd.DataFrame(data)
+
         if df.empty:
             return None
+
         df.rename(columns={"max": "high", "min": "low"}, inplace=True)
         return df
     except:
         return None
 
 def main():
-    global LOSS_STREAK, LAST_LOSS, DAILY_TRADES
+    global LOSS_STREAK, LAST_LOSS, LAST_TRADE_TIME
 
     iq = connect()
     risk = RiskManager()
@@ -103,12 +88,7 @@ def main():
 
     while True:
         try:
-            reset_day()
-
-            if DAILY_TRADES >= MAX_DAILY_TRADES:
-                time.sleep(5)
-                continue
-
+            # 🔴 CONTROL DE RACHA PERDEDORA
             if LOSS_STREAK >= MAX_LOSS_STREAK:
                 if time.time() - LAST_LOSS < PAUSE_TIME:
                     continue
@@ -118,7 +98,7 @@ def main():
             server_time = iq.get_server_timestamp()
             sec = server_time % 60
 
-            # 🔍 ANALISIS ULTRA FILTRADO
+            # 🔍 ANALISIS (ANTES DE CIERRE DE VELA)
             if 45 <= sec <= 58:
                 signal = None
 
@@ -129,16 +109,17 @@ def main():
                 for pair in PAIRS:
                     df1 = get_df(iq, pair, TIMEFRAME_M1)
                     df5 = get_df(iq, pair, TIMEFRAME_M5)
+                    df15 = get_df(iq, pair, TIMEFRAME_M15)  # ✅ CLAVE
 
-                    if df1 is None or df5 is None:
+                    if df1 is None or df5 is None or df15 is None:
                         continue
 
-                    score = score_market(df1, df5)
+                    score = score_market(df1, df5, df15)  # ✅ FIX
 
-                    if score < 5:
+                    if score < 6:
                         continue
 
-                    s = get_signal(df1, df5)
+                    s = get_signal(df1, df5, df15)  # ✅ FIX
 
                     if s and score > best_score:
                         best_score = score
@@ -148,7 +129,7 @@ def main():
                 if best_pair:
                     signal = (best_pair, best_signal)
 
-            # 🎯 ENTRADA PERFECT TIMING
+            # 🎯 EJECUCIÓN (TIMING PERFECTO)
             if sec >= 59.5 or sec <= 0.3:
                 candle = int(server_time // 60)
 
@@ -160,6 +141,10 @@ def main():
                 if not signal:
                     continue
 
+                # 🔥 CONTROL DE FRECUENCIA
+                if time.time() - LAST_TRADE_TIME < MIN_TRADE_GAP:
+                    continue
+
                 pair, direction = signal
 
                 if not risk.can_trade():
@@ -168,8 +153,9 @@ def main():
                 status, trade_id = iq.buy(BASE_AMOUNT, pair, direction, EXPIRATION)
 
                 if status:
-                    DAILY_TRADES += 1
-                    send(f"⚡ {pair} {direction.upper()} ({DAILY_TRADES}/4)")
+                    LAST_TRADE_TIME = time.time()
+
+                    send(f"⚡ {pair} {direction.upper()}")
                     risk.register_trade()
 
                     time.sleep(65)
@@ -178,7 +164,7 @@ def main():
                     if result < 0:
                         LOSS_STREAK += 1
                         LAST_LOSS = time.time()
-                        send(f"❌ LOSS {LOSS_STREAK}")
+                        send("❌ LOSS")
                     else:
                         LOSS_STREAK = 0
                         send("✅ WIN")
