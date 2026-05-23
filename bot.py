@@ -43,7 +43,7 @@ PAIRS = [
 ]
 
 DAILY_TRADES = 0
-MAX_DAILY_TRADES = 10
+MAX_DAILY_TRADES = 50
 CURRENT_DAY = datetime.utcnow().day
 
 LOSS_STREAK = 0
