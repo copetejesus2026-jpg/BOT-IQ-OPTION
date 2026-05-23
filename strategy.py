@@ -22,7 +22,7 @@ def strong_bull(c):
 def strong_bear(c):
     return bearish(c) and body(c) > range_c(c) * 0.6
 
-# ================= TENDENCIAS =================
+# ================= TENDENCIA =================
 
 def trend(df):
     highs = df["high"].values
@@ -49,19 +49,43 @@ def is_overextended(df):
     avg = np.mean(df["high"] - df["low"])
     return range_c(last) > avg * 1.8
 
-# ❗ Movimiento demasiado extendido (evita entrar tarde)
+# ❗ movimiento demasiado extendido (evita entrar tarde)
 def is_extended_move(df):
     moves = np.abs(df["close"] - df["open"])
     return moves.iloc[-1] > np.mean(moves) * 1.5
 
-# ❗ Detecta si ya hubo demasiadas velas en la misma dirección
+# ❗ demasiadas velas seguidas en la misma dirección
 def late_entry(df):
     last3 = df.iloc[-3:]
 
-    bullish_count = sum(1 for _, c in last3.iterrows() if c["close"] > c["open"])
-    bearish_count = sum(1 for _, c in last3.iterrows() if c["close"] < c["open"])
+    bullish_count = sum(1 for _, c in last3.iterrows() if bullish(c))
+    bearish_count = sum(1 for _, c in last3.iterrows() if bearish(c))
 
     return bullish_count >= 3 or bearish_count >= 3
+
+# ================= ESTRUCTURA =================
+
+def strong_trend(df):
+    highs = df["high"].values
+    lows = df["low"].values
+
+    return (
+        highs[-1] > highs[-2] > highs[-3] and
+        lows[-1] > lows[-2] > lows[-3]
+    ) or (
+        highs[-1] < highs[-2] < highs[-3] and
+        lows[-1] < lows[-2] < lows[-3]
+    )
+
+# 🔥 Detecta si es solo retroceso (pullback)
+def is_pullback(df5, df15):
+    macro = trend(df15)
+    micro = trend(df5)
+
+    if macro and micro and macro != micro:
+        return True
+
+    return False
 
 # ================= PULLBACK =================
 
@@ -95,26 +119,30 @@ def score_market(df1, df5, df15):
 
 def get_signal(df1, df5, df15):
     try:
-        # ❌ mercado lateral
+        # ❌ evitar lateral
         if is_ranging(df5):
             return None
 
-        # ❌ vela exagerada
+        # ❌ evitar vela exagerada
         if is_overextended(df1):
             return None
 
-        # ❌ entrada tarde
+        # ❌ evitar entrada tarde
         if late_entry(df1):
             return None
 
-        # ❌ movimiento ya extendido
+        # ❌ evitar mercado extendido
         if is_extended_move(df1):
             return None
 
         macro = macro_trend(df15)
         micro = trend(df5)
 
-        # ❌ si no están alineadas → NO OPERAR
+        # ❌ evitar operar en pullbacks (ERROR DE TU IMAGEN)
+        if is_pullback(df5, df15):
+            return None
+
+        # ❌ si no están alineadas
         if macro != micro:
             return None
 
