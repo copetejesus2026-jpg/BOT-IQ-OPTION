@@ -15,9 +15,11 @@ sys.stderr = open(os.devnull, 'w')
 
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 3
-BASE_AMOUNT = 6000
+BASE_AMOUNT = 20000
 
 TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
@@ -25,9 +27,20 @@ TIMEFRAME_M15 = 900
 
 PAIRS = [
     "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","EURGBP-OTC","EURJPY-OTC",
-    "GBPJPY-OTC","USDJPY-OTC","AUDUSD-OTC","USDCAD-OTC","NZDUSD-OTC",
+    "GBPJPY-OTC","AUDUSD-OTC","USDCAD-OTC","NZDUSD-OTC",
     "EURCAD-OTC","GBPCAD-OTC","AUDJPY-OTC","CADJPY-OTC","CHFJPY-OTC"
 ]
+
+def send(msg):
+    if TOKEN and CHAT_ID:
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                data={"chat_id": CHAT_ID, "text": msg},
+                timeout=3
+            )
+        except:
+            pass
 
 def connect():
     while True:
@@ -36,6 +49,7 @@ def connect():
             status, _ = iq.connect()
             if status:
                 iq.change_balance("PRACTICE")
+                send("🔥 BOT SNIPER ACTIVO")
                 return iq
         except:
             pass
@@ -64,6 +78,7 @@ def main():
             server_time = iq.get_server_timestamp()
             sec = server_time % 60
 
+            # 🔍 ANALISIS
             if 45 <= sec <= 58:
                 signal = None
                 best_score = 0
@@ -87,6 +102,7 @@ def main():
                         best_score = score
                         signal = (pair, s)
 
+            # 🎯 ENTRADA
             if sec >= 59.5 or sec <= 0.3:
                 candle = int(server_time // 60)
 
@@ -106,12 +122,17 @@ def main():
                 status, trade_id = iq.buy(BASE_AMOUNT, pair, direction, EXPIRATION)
 
                 if status:
+                    send(f"🎯 {pair} {direction.upper()}")
+
                     risk.register_trade()
 
                     time.sleep(180)
                     result = iq.check_win_v4(trade_id)
 
-                    print("WIN" if result > 0 else "LOSS")
+                    if result > 0:
+                        send("✅ WIN")
+                    else:
+                        send("❌ LOSS")
 
             time.sleep(0.05)
 
