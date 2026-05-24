@@ -18,8 +18,8 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-EXPIRATION = 2
-BASE_AMOUNT = 20000
+EXPIRATION = 3
+BASE_AMOUNT = 7000
 
 TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
@@ -27,9 +27,14 @@ TIMEFRAME_M15 = 900
 
 PAIRS = [
     "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","EURGBP-OTC","EURJPY-OTC",
-    "GBPJPY-OTC","AUDUSD-OTC","USDCAD-OTC","NZDUSD-OTC",
+    "GBPJPY-OTC","USDJPY-OTC","AUDUSD-OTC","USDCAD-OTC","NZDUSD-OTC",
     "EURCAD-OTC","GBPCAD-OTC","AUDJPY-OTC","CADJPY-OTC","CHFJPY-OTC"
 ]
+
+BOT_RUNNING = True
+LAST_UPDATE_ID = None
+
+# ================= TELEGRAM =================
 
 def send(msg):
     if TOKEN and CHAT_ID:
@@ -41,6 +46,39 @@ def send(msg):
             )
         except:
             pass
+
+def check_telegram():
+    global BOT_RUNNING, LAST_UPDATE_ID
+
+    if not TOKEN:
+        return
+
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+        params = {"timeout": 1, "offset": LAST_UPDATE_ID}
+        res = requests.get(url, params=params, timeout=2).json()
+
+        for update in res.get("result", []):
+            LAST_UPDATE_ID = update["update_id"] + 1
+
+            if "message" in update and "text" in update["message"]:
+                text = update["message"]["text"].lower()
+
+                if str(update["message"]["chat"]["id"]) != str(CHAT_ID):
+                    continue
+
+                if text == "/stop":
+                    BOT_RUNNING = False
+                    send("🛑 BOT DETENIDO")
+
+                if text == "/start":
+                    BOT_RUNNING = True
+                    send("🚀 BOT ACTIVADO")
+
+    except:
+        pass
+
+# ================= IQ OPTION =================
 
 def connect():
     while True:
@@ -66,7 +104,11 @@ def get_df(iq, pair, tf):
     except:
         return None
 
+# ================= MAIN =================
+
 def main():
+    global BOT_RUNNING
+
     iq = connect()
     risk = RiskManager()
 
@@ -75,6 +117,13 @@ def main():
 
     while True:
         try:
+            # 🔥 CONTROL TELEGRAM
+            check_telegram()
+
+            if not BOT_RUNNING:
+                time.sleep(1)
+                continue
+
             server_time = iq.get_server_timestamp()
             sec = server_time % 60
 
