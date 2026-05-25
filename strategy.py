@@ -1,7 +1,12 @@
 import numpy as np
 
+# ================= BASICOS =================
+
 def body(c):
     return abs(c["close"] - c["open"])
+
+def range_c(c):
+    return c["high"] - c["low"]
 
 def bullish(c):
     return c["close"] > c["open"]
@@ -23,58 +28,56 @@ def trend(df):
 
     return None
 
-# ================= FILTROS =================
+# ================= CONSOLIDACIÓN =================
 
 def is_ranging(df):
     return (df["high"].max() - df["low"].min()) < np.mean(df["high"] - df["low"]) * 2
+
+# ================= AGOTAMIENTO =================
 
 def is_exhausted(df):
     moves = np.abs(df["close"] - df["open"])
     return moves.iloc[-1] < np.mean(moves) * 0.5
 
+# ================= SOPORTE / RESISTENCIA =================
+
+def near_support_resistance(df):
+    high_zone = df["high"].max()
+    low_zone = df["low"].min()
+    price = df.iloc[-1]["close"]
+
+    if abs(price - high_zone) < (high_zone - low_zone) * 0.1:
+        return True
+
+    if abs(price - low_zone) < (high_zone - low_zone) * 0.1:
+        return True
+
+    return False
+
+# 🔥 ZONAS FUERTES (3+ TOQUES)
+
 def strong_support_resistance(df):
     highs = df["high"].values
     lows = df["low"].values
-    tol = np.mean(df["high"] - df["low"]) * 0.3
 
-    touches_high = sum(abs(h - max(highs[-10:])) < tol for h in highs[-10:])
-    touches_low = sum(abs(l - min(lows[-10:])) < tol for l in lows[-10:])
+    tolerance = np.mean(df["high"] - df["low"]) * 0.3
 
-    return touches_high >= 3 or touches_low >= 3
+    touches_high = 0
+    touches_low = 0
 
-# ================= NUEVOS FILTROS PRO =================
+    for i in range(-10, 0):
+        if abs(highs[i] - max(highs[-10:])) < tolerance:
+            touches_high += 1
 
-def strong_momentum(df):
-    last = df.iloc[-1]
-    avg = np.mean(df["high"] - df["low"])
-    return (last["high"] - last["low"]) > avg * 1.2
+        if abs(lows[i] - min(lows[-10:])) < tolerance:
+            touches_low += 1
 
-def late_entry(df):
-    closes = df["close"].values
-    count = 0
+    if touches_high >= 3 or touches_low >= 3:
+        return True
 
-    for i in range(-1, -6, -1):
-        if closes[i] > closes[i-1]:
-            count += 1
+    return False
 
-    return count >= 3
-
-def optimal_zone(df):
-    high = df["high"].max()
-    low = df["low"].min()
-    price = df.iloc[-1]["close"]
-
-    mid = (high + low) / 2
-
-    if price < mid:
-        return "discount"
-
-    if price > mid:
-        return "premium"
-
-    return None
-
-# ================= CONFIRMACIONES =================
+# ================= MANIPULACIÓN =================
 
 def liquidity_sweep(df):
     last = df.iloc[-1]
@@ -88,8 +91,25 @@ def liquidity_sweep(df):
 
     return None
 
-def rejection(df):
+# ================= FALSA RUPTURA =================
+
+def fake_breakout(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    if last["high"] > prev["high"] and last["close"] < prev["high"]:
+        return True
+
+    if last["low"] < prev["low"] and last["close"] > prev["low"]:
+        return True
+
+    return False
+
+# ================= RECHAZO =================
+
+def rejection_candle(df):
     c = df.iloc[-1]
+
     upper = c["high"] - max(c["open"], c["close"])
     lower = min(c["open"], c["close"]) - c["low"]
     b = body(c)
@@ -102,75 +122,43 @@ def rejection(df):
 
     return None
 
-def engulfing(df):
-    c1 = df.iloc[-2]
-    c2 = df.iloc[-1]
+# ================= ENTRADA =================
 
-    if bearish(c1) and bullish(c2):
-        if c2["close"] > c1["open"] and c2["open"] < c1["close"]:
-            return "bullish"
-
-    if bullish(c1) and bearish(c2):
-        if c2["close"] < c1["open"] and c2["open"] > c1["close"]:
-            return "bearish"
-
-    return None
-
-def pullback(df):
-    return body(df.iloc[-1]) < body(df.iloc[-2])
-
-# ================= ENTRADA FINAL =================
-
-def get_signal(df1, df5, df30):
+def get_signal(df1, df5):
     try:
-        macro = trend(df30)
-        micro = trend(df5)
+        t = trend(df5)
 
-        if not macro or not micro:
+        if not t:
             return None
 
-        if macro != micro:
-            return None
-
+        # ❌ FILTROS CLAVE
         if is_ranging(df5):
             return None
 
         if is_exhausted(df1):
             return None
 
+        if near_support_resistance(df5):
+            return None
+
         if strong_support_resistance(df5):
             return None
 
-        if not pullback(df5):
-            return None
-
-        if late_entry(df5):
-            return None
-
-        if not strong_momentum(df1):
-            return None
-
-        zone = optimal_zone(df5)
-
+        # 🔥 MANIPULACIÓN + RECHAZO
         sweep = liquidity_sweep(df1)
-        rej = rejection(df1)
-        eng = engulfing(df1)
+        reject = rejection_candle(df1)
 
-        if not sweep:
+        if not sweep or not reject:
             return None
 
-        # ===== CALL =====
-        if macro == "bullish":
-            if zone != "discount":
-                return None
-            if sweep == "bullish" and (rej == "bullish" or eng == "bullish"):
+        # ================= CALL =================
+        if t == "bullish":
+            if sweep == "bullish" and reject == "bullish":
                 return "call"
 
-        # ===== PUT =====
-        if macro == "bearish":
-            if zone != "premium":
-                return None
-            if sweep == "bearish" and (rej == "bearish" or eng == "bearish"):
+        # ================= PUT =================
+        if t == "bearish":
+            if sweep == "bearish" and reject == "bearish":
                 return "put"
 
         return None
@@ -180,14 +168,11 @@ def get_signal(df1, df5, df30):
 
 # ================= SCORE =================
 
-def score_market(df1, df5, df30):
+def score_market(df1, df5):
     score = 0
 
-    if trend(df30):
-        score += 3
-
     if trend(df5):
-        score += 2
+        score += 3
 
     if not is_ranging(df5):
         score += 2
