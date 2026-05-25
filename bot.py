@@ -1,148 +1,190 @@
-import numpy as np
+import time
+import os
+import requests
+import pandas as pd
+import sys
+import logging
 
-def body(c):
-    return abs(c["close"] - c["open"])
+from iqoptionapi.stable_api import IQ_Option
+from strategy import get_signal, score_market
+from risk import RiskManager
 
-def range_c(c):
-    return c["high"] - c["low"]
+logging.getLogger().setLevel(logging.CRITICAL)
+sys.stderr = open(os.devnull, 'w')
 
-def bullish(c):
-    return c["close"] > c["open"]
+EMAIL = os.getenv("IQ_EMAIL")
+PASSWORD = os.getenv("IQ_PASSWORD")
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-def bearish(c):
-    return c["close"] < c["open"]
+EXPIRATION = 3
+BASE_AMOUNT = 2000
 
-def trend(df):
-    highs = df["high"].values
-    lows = df["low"].values
+TIMEFRAME_M1 = 60
+TIMEFRAME_M5 = 300
+TIMEFRAME_M30 = 1800
 
-    if highs[-1] > highs[-2] and lows[-1] > lows[-2]:
-        return "bullish"
+# 🔥 SOLO 9 PARES
+PAIRS = [
+    "EURUSD-OTC",
+    "GBPUSD-OTC",
+    "USDCHF-OTC",
+    "EURGBP-OTC",
+    "EURJPY-OTC",
+    "EURCAD-OTC",
+    "GBPCAD-OTC",
+    "AUDJPY-OTC",
+    "CADJPY-OTC"
+]
 
-    if highs[-1] < highs[-2] and lows[-1] < lows[-2]:
-        return "bearish"
+BOT_RUNNING = False
+LAST_UPDATE_ID = None
 
-    return None
+def send(msg):
+    if TOKEN and CHAT_ID:
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                data={"chat_id": CHAT_ID, "text": msg},
+                timeout=3
+            )
+        except:
+            pass
 
-def is_ranging(df):
-    return (df["high"].max() - df["low"].min()) < np.mean(df["high"] - df["low"]) * 2
+def check_telegram():
+    global BOT_RUNNING, LAST_UPDATE_ID
 
-def is_exhausted(df):
-    moves = np.abs(df["close"] - df["open"])
-    return moves.iloc[-1] < np.mean(moves) * 0.5
-
-def strong_support_resistance(df):
-    highs = df["high"].values
-    lows = df["low"].values
-
-    tol = np.mean(df["high"] - df["low"]) * 0.3
-
-    touches_high = sum(abs(h - max(highs[-10:])) < tol for h in highs[-10:])
-    touches_low = sum(abs(l - min(lows[-10:])) < tol for l in lows[-10:])
-
-    return touches_high >= 3 or touches_low >= 3
-
-def liquidity_sweep(df):
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-
-    if last["high"] > prev["high"] and last["close"] < prev["high"]:
-        return "bearish"
-
-    if last["low"] < prev["low"] and last["close"] > prev["low"]:
-        return "bullish"
-
-    return None
-
-def rejection(df):
-    c = df.iloc[-1]
-    upper = c["high"] - max(c["open"], c["close"])
-    lower = min(c["open"], c["close"]) - c["low"]
-    b = body(c)
-
-    if upper > b * 1.5:
-        return "bearish"
-
-    if lower > b * 1.5:
-        return "bullish"
-
-    return None
-
-def engulfing(df):
-    c1 = df.iloc[-2]
-    c2 = df.iloc[-1]
-
-    if bearish(c1) and bullish(c2):
-        if c2["close"] > c1["open"] and c2["open"] < c1["close"]:
-            return "bullish"
-
-    if bullish(c1) and bearish(c2):
-        if c2["close"] < c1["open"] and c2["open"] > c1["close"]:
-            return "bearish"
-
-    return None
-
-def pullback(df5):
-    c1 = df5.iloc[-1]
-    c2 = df5.iloc[-2]
-    return body(c1) < body(c2)
-
-def get_signal(df1, df5, df30):
     try:
-        macro = trend(df30)
-        micro = trend(df5)
+        res = requests.get(
+            f"https://api.telegram.org/bot{TOKEN}/getUpdates",
+            params={"offset": LAST_UPDATE_ID}
+        ).json()
 
-        if not macro or not micro:
+        for update in res.get("result", []):
+            LAST_UPDATE_ID = update["update_id"] + 1
+
+            if "message" in update:
+                text = update["message"].get("text", "").lower()
+                chat = str(update["message"]["chat"]["id"])
+
+                if chat != str(CHAT_ID):
+                    continue
+
+                if text == "/stop":
+                    BOT_RUNNING = False
+                    send("🛑 BOT DETENIDO")
+
+                elif text == "/star":
+                    BOT_RUNNING = True
+                    send("🚀 BOT ACTIVADO")
+
+    except:
+        pass
+
+def connect():
+    while True:
+        try:
+            iq = IQ_Option(EMAIL, PASSWORD)
+            status, _ = iq.connect()
+            if status:
+                iq.change_balance("PRACTICE")
+                send("🔥 BOT LISTO (usa /Star)")
+                return iq
+        except:
+            pass
+        time.sleep(3)
+
+def get_df(iq, pair, tf):
+    try:
+        data = iq.get_candles(pair, tf, 120, time.time())
+        df = pd.DataFrame(data)
+        if df.empty:
             return None
-
-        if macro != micro:
-            return None
-
-        if is_ranging(df5):
-            return None
-
-        if is_exhausted(df1):
-            return None
-
-        if strong_support_resistance(df5):
-            return None
-
-        if not pullback(df5):
-            return None
-
-        sweep = liquidity_sweep(df1)
-        rej = rejection(df1)
-        eng = engulfing(df1)
-
-        if not sweep:
-            return None
-
-        if macro == "bullish":
-            if sweep == "bullish" and (rej == "bullish" or eng == "bullish"):
-                return "call"
-
-        if macro == "bearish":
-            if sweep == "bearish" and (rej == "bearish" or eng == "bearish"):
-                return "put"
-
-        return None
-
+        df.rename(columns={"max": "high", "min": "low"}, inplace=True)
+        return df
     except:
         return None
 
-def score_market(df1, df5, df30):
-    score = 0
+def main():
+    global BOT_RUNNING
 
-    if trend(df30):
-        score += 3
+    iq = connect()
+    risk = RiskManager()
 
-    if trend(df5):
-        score += 2
+    last_candle = None
+    signal = None
 
-    if not is_ranging(df5):
-        score += 2
+    while True:
+        try:
+            check_telegram()
 
-    if not is_exhausted(df1):
-        score += 2
+            if not BOT_RUNNING:
+                time.sleep(1)
+                continue
 
-    return score
+            server_time = iq.get_server_timestamp()
+            sec = server_time % 60
+
+            if 45 <= sec <= 58:
+                signal = None
+                best_score = 0
+
+                for pair in PAIRS:
+                    df1 = get_df(iq, pair, TIMEFRAME_M1)
+                    df5 = get_df(iq, pair, TIMEFRAME_M5)
+                    df30 = get_df(iq, pair, TIMEFRAME_M30)
+
+                    if df1 is None or df5 is None or df30 is None:
+                        continue
+
+                    score = score_market(df1, df5, df30)
+
+                    if score < 7:
+                        continue
+
+                    s = get_signal(df1, df5, df30)
+
+                    if s and score > best_score:
+                        best_score = score
+                        signal = (pair, s)
+
+            if sec >= 59.5 or sec <= 0.3:
+                candle = int(server_time // 60)
+
+                if candle == last_candle:
+                    continue
+
+                last_candle = candle
+
+                if not signal:
+                    continue
+
+                pair, direction = signal
+
+                if not risk.can_trade():
+                    continue
+
+                status, trade_id = iq.buy(BASE_AMOUNT, pair, direction, EXPIRATION)
+
+                if status:
+                    tipo = "COMPRA" if direction == "call" else "VENTA"
+                    send(f"{pair} {tipo} 3 MINUTOS")
+
+                    risk.register_trade()
+
+                    time.sleep(180)
+                    result = iq.check_win_v4(trade_id)
+
+                    if result > 0:
+                        send("✅ WIN")
+                    else:
+                        send("❌ LOSS")
+
+            time.sleep(0.05)
+
+        except Exception as e:
+            print("Error:", e)
+            time.sleep(2)
+
+if __name__ == "__main__":
+    main()
