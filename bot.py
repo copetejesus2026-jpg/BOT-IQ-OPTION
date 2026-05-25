@@ -22,16 +22,17 @@ BASE_AMOUNT = 2000
 
 TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
-TIMEFRAME_M30 = 1800
 
 PAIRS = [
-    "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC",
-    "EURGBP-OTC","EURJPY-OTC",
-    "EURCAD-OTC","GBPCAD-OTC"
+    "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","EURGBP-OTC","EURJPY-OTC",
+    "GBPJPY-OTC","USDJPY-OTC","AUDUSD-OTC","USDCAD-OTC","NZDUSD-OTC",
+    "EURCAD-OTC","GBPCAD-OTC","AUDJPY-OTC","CADJPY-OTC","CHFJPY-OTC"
 ]
 
-BOT_RUNNING = False
+BOT_RUNNING = True
 LAST_UPDATE_ID = None
+
+# ================= TELEGRAM =================
 
 def send(msg):
     if TOKEN and CHAT_ID:
@@ -48,10 +49,9 @@ def check_telegram():
     global BOT_RUNNING, LAST_UPDATE_ID
 
     try:
-        res = requests.get(
-            f"https://api.telegram.org/bot{TOKEN}/getUpdates",
-            params={"offset": LAST_UPDATE_ID}
-        ).json()
+        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+        params = {"offset": LAST_UPDATE_ID}
+        res = requests.get(url, params=params).json()
 
         for update in res.get("result", []):
             LAST_UPDATE_ID = update["update_id"] + 1
@@ -67,12 +67,14 @@ def check_telegram():
                     BOT_RUNNING = False
                     send("🛑 BOT DETENIDO")
 
-                elif text == "/star":
+                elif text == "/start":
                     BOT_RUNNING = True
                     send("🚀 BOT ACTIVADO")
 
     except:
         pass
+
+# ================= IQ =================
 
 def connect():
     while True:
@@ -81,7 +83,7 @@ def connect():
             status, _ = iq.connect()
             if status:
                 iq.change_balance("PRACTICE")
-                send("🔥 BOT PRO LISTO (/Star)")
+                send("🔥 BOT ACTIVO")
                 return iq
         except:
             pass
@@ -97,6 +99,8 @@ def get_df(iq, pair, tf):
         return df
     except:
         return None
+
+# ================= MAIN =================
 
 def main():
     global BOT_RUNNING
@@ -118,6 +122,7 @@ def main():
             server_time = iq.get_server_timestamp()
             sec = server_time % 60
 
+            # 🔍 ANALISIS
             if 45 <= sec <= 58:
                 signal = None
                 best_score = 0
@@ -125,22 +130,22 @@ def main():
                 for pair in PAIRS:
                     df1 = get_df(iq, pair, TIMEFRAME_M1)
                     df5 = get_df(iq, pair, TIMEFRAME_M5)
-                    df30 = get_df(iq, pair, TIMEFRAME_M30)
 
-                    if df1 is None or df5 is None or df30 is None:
+                    if df1 is None or df5 is None:
                         continue
 
-                    score = score_market(df1, df5, df30)
+                    score = score_market(df1, df5)
 
-                    if score < 7:
+                    if score < 5:
                         continue
 
-                    s = get_signal(df1, df5, df30)
+                    s = get_signal(df1, df5)
 
                     if s and score > best_score:
                         best_score = score
                         signal = (pair, s)
 
+            # 🎯 ENTRADA
             if sec >= 59.5 or sec <= 0.3:
                 candle = int(server_time // 60)
 
