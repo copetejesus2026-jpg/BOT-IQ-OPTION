@@ -28,131 +28,135 @@ def trend(df):
 
     return None
 
-def macro_trend(df15):
-    return trend(df15)
+# ================= CONSOLIDACIÓN =================
 
-# ================= FILTROS =================
-
-# 🔴 CONSOLIDACIÓN
 def is_ranging(df):
     return (df["high"].max() - df["low"].min()) < np.mean(df["high"] - df["low"]) * 2
 
-# 🔴 AGOTAMIENTO
+# ================= AGOTAMIENTO =================
+
 def is_exhausted(df):
     moves = np.abs(df["close"] - df["open"])
     return moves.iloc[-1] < np.mean(moves) * 0.5
 
-# 🔴 ENTRADA TARDE
-def late_entry(df):
-    last3 = df.iloc[-3:]
-    bullish_count = sum(1 for _, c in last3.iterrows() if bullish(c))
-    bearish_count = sum(1 for _, c in last3.iterrows() if bearish(c))
-    return bullish_count >= 3 or bearish_count >= 3
+# ================= SOPORTE / RESISTENCIA =================
 
-# 🔴 ZONA YA RESPETADA (RECHAZO PREVIO)
-def already_reacted(df):
-    last5 = df.iloc[-5:]
-    rejections = 0
+def near_support_resistance(df):
+    high_zone = df["high"].max()
+    low_zone = df["low"].min()
+    price = df.iloc[-1]["close"]
 
-    for _, c in last5.iterrows():
-        upper = c["high"] - max(c["open"], c["close"])
-        lower = min(c["open"], c["close"]) - c["low"]
+    if abs(price - high_zone) < (high_zone - low_zone) * 0.1:
+        return True
 
-        if upper > body(c) or lower > body(c):
-            rejections += 1
+    if abs(price - low_zone) < (high_zone - low_zone) * 0.1:
+        return True
 
-    return rejections >= 3
+    return False
 
-# 🔴 MOVIMIENTO EXTENDIDO
-def overextended(df):
+# ================= MANIPULACIÓN =================
+
+def liquidity_sweep(df):
     last = df.iloc[-1]
-    avg = np.mean(df["high"] - df["low"])
-    return range_c(last) > avg * 1.8
+    prev = df.iloc[-2]
 
-# ================= ESTRUCTURA =================
-
-def break_of_structure(df):
-    highs = df["high"].values
-    lows = df["low"].values
-
-    if highs[-1] > highs[-2] > highs[-3]:
-        return "bullish"
-
-    if lows[-1] < lows[-2] < lows[-3]:
+    if last["high"] > prev["high"] and last["close"] < prev["high"]:
         return "bearish"
+
+    if last["low"] < prev["low"] and last["close"] > prev["low"]:
+        return "bullish"
 
     return None
 
-def is_pullback(df5, df15):
-    macro = trend(df15)
-    micro = trend(df5)
-    return macro and micro and macro != micro
+# ================= FALSA RUPTURA =================
 
-# ================= MOMENTUM =================
+def fake_breakout(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
 
-def strong_move(df):
-    moves = np.abs(df["close"] - df["open"])
-    return moves.iloc[-1] > np.mean(moves)
+    # rompe pero regresa
+    if last["high"] > prev["high"] and last["close"] < prev["high"]:
+        return True
+
+    if last["low"] < prev["low"] and last["close"] > prev["low"]:
+        return True
+
+    return False
+
+# ================= RECHAZO =================
+
+def rejection_candle(df):
+    c = df.iloc[-1]
+
+    upper = c["high"] - max(c["open"], c["close"])
+    lower = min(c["open"], c["close"]) - c["low"]
+    b = body(c)
+
+    if upper > b * 1.5:
+        return "bearish"
+
+    if lower > b * 1.5:
+        return "bullish"
+
+    return None
 
 # ================= ENTRADA =================
 
-def get_signal(df1, df5, df15):
+def get_signal(df1, df5):
     try:
-        macro = macro_trend(df15)
-        micro = trend(df5)
+        t = trend(df5)
 
-        # ❌ FILTROS CRÍTICOS
+        # ❌ FILTROS
+        if not t:
+            return None
+
         if is_ranging(df5):
             return None
 
         if is_exhausted(df1):
             return None
 
-        if late_entry(df1):
+        if near_support_resistance(df5):
             return None
 
-        if already_reacted(df1):
+        # 🔥 MANIPULACIÓN + RECHAZO
+        sweep = liquidity_sweep(df1)
+        reject = rejection_candle(df1)
+
+        if not sweep or not reject:
             return None
 
-        if overextended(df1):
-            return None
+        # ❌ evitar falsas rupturas débiles
+        if fake_breakout(df1):
+            pass  # permitido SOLO si coincide con sweep
 
-        if is_pullback(df5, df15):
-            return None
+        # ================= CALL =================
+        if t == "bullish":
+            if sweep == "bullish" and reject == "bullish":
+                return "call"
 
-        bos = break_of_structure(df5)
-
-        if macro != micro or bos != micro:
-            return None
-
-        # ✅ ENTRADA LIMPIA
-        if macro == "bullish" and strong_move(df1):
-            return "call"
-
-        if macro == "bearish" and strong_move(df1):
-            return "put"
+        # ================= PUT =================
+        if t == "bearish":
+            if sweep == "bearish" and reject == "bearish":
+                return "put"
 
         return None
 
     except:
         return None
 
-
 # ================= SCORE =================
 
-def score_market(df1, df5, df15):
+def score_market(df1, df5):
     score = 0
 
-    if macro_trend(df15):
-        score += 3
-
     if trend(df5):
-        score += 2
+        score += 3
 
     if not is_ranging(df5):
         score += 2
 
-    if strong_move(df1):
+    if not is_exhausted(df1):
         score += 2
 
     return score
