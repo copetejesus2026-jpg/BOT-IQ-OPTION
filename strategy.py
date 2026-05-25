@@ -54,6 +54,29 @@ def near_support_resistance(df):
 
     return False
 
+# 🔥 ZONAS FUERTES (3+ TOQUES)
+
+def strong_support_resistance(df):
+    highs = df["high"].values
+    lows = df["low"].values
+
+    tolerance = np.mean(df["high"] - df["low"]) * 0.3
+
+    touches_high = 0
+    touches_low = 0
+
+    for i in range(-10, 0):
+        if abs(highs[i] - max(highs[-10:])) < tolerance:
+            touches_high += 1
+
+        if abs(lows[i] - min(lows[-10:])) < tolerance:
+            touches_low += 1
+
+    if touches_high >= 3 or touches_low >= 3:
+        return True
+
+    return False
+
 # ================= MANIPULACIÓN =================
 
 def liquidity_sweep(df):
@@ -74,7 +97,6 @@ def fake_breakout(df):
     last = df.iloc[-1]
     prev = df.iloc[-2]
 
-    # rompe pero regresa
     if last["high"] > prev["high"] and last["close"] < prev["high"]:
         return True
 
@@ -106,10 +128,10 @@ def get_signal(df1, df5):
     try:
         t = trend(df5)
 
-        # ❌ FILTROS
         if not t:
             return None
 
+        # ❌ FILTROS CLAVE
         if is_ranging(df5):
             return None
 
@@ -119,16 +141,15 @@ def get_signal(df1, df5):
         if near_support_resistance(df5):
             return None
 
+        if strong_support_resistance(df5):
+            return None
+
         # 🔥 MANIPULACIÓN + RECHAZO
         sweep = liquidity_sweep(df1)
         reject = rejection_candle(df1)
 
         if not sweep or not reject:
             return None
-
-        # ❌ evitar falsas rupturas débiles
-        if fake_breakout(df1):
-            pass  # permitido SOLO si coincide con sweep
 
         # ================= CALL =================
         if t == "bullish":
