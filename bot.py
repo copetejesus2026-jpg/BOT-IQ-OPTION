@@ -24,8 +24,9 @@ TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
 
 PAIRS = [
-    "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","EURGBP-OTC","EURJPY-OTC"
-    "EURCAD-OTC","GBPCAD-OTC","AUDJPY-OTC","CADJPY-OTC"
+    "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","EURGBP-OTC","EURJPY-OTC",
+    "GBPJPY-OTC","USDJPY-OTC","AUDUSD-OTC","USDCAD-OTC","NZDUSD-OTC",
+    "EURCAD-OTC","GBPCAD-OTC","AUDJPY-OTC","CADJPY-OTC","CHFJPY-OTC"
 ]
 
 BOT_RUNNING = True
@@ -82,7 +83,7 @@ def connect():
             status, _ = iq.connect()
             if status:
                 iq.change_balance("PRACTICE")
-                send("🔥 BOT INSTITUCIONAL ACTIVO")
+                send("🔥 BOT ACTIVO")
                 return iq
         except:
             pass
@@ -165,7 +166,7 @@ def main():
 
                 if status:
                     tipo = "COMPRA" if direction == "call" else "VENTA"
-                    send(f"📊 {pair} {tipo} 3 MINUTOS")
+                    send(f"{pair} {tipo} 3 MINUTOS")
 
                     risk.register_trade()
 
