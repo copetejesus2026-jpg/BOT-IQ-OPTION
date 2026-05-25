@@ -4,7 +4,6 @@ import requests
 import pandas as pd
 import sys
 import logging
-from datetime import datetime
 
 from iqoptionapi.stable_api import IQ_Option
 from strategy import get_signal, score_market
@@ -26,7 +25,9 @@ TIMEFRAME_M5 = 300
 TIMEFRAME_M15 = 900
 
 PAIRS = [
-    "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","EURGBP-OTC","EURJPY-OTC"
+    "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","EURGBP-OTC","EURJPY-OTC",
+    "GBPJPY-OTC","USDJPY-OTC","AUDUSD-OTC","USDCAD-OTC","NZDUSD-OTC",
+    "EURCAD-OTC","GBPCAD-OTC","AUDJPY-OTC","CADJPY-OTC","CHFJPY-OTC"
 ]
 
 BOT_RUNNING = True
@@ -48,35 +49,33 @@ def send(msg):
 def check_telegram():
     global BOT_RUNNING, LAST_UPDATE_ID
 
-    if not TOKEN:
-        return
-
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
-        params = {"timeout": 1, "offset": LAST_UPDATE_ID}
-        res = requests.get(url, params=params, timeout=2).json()
+        params = {"offset": LAST_UPDATE_ID}
+        res = requests.get(url, params=params).json()
 
         for update in res.get("result", []):
             LAST_UPDATE_ID = update["update_id"] + 1
 
-            if "message" in update and "text" in update["message"]:
-                text = update["message"]["text"].lower()
+            if "message" in update:
+                text = update["message"].get("text", "").lower()
+                chat = str(update["message"]["chat"]["id"])
 
-                if str(update["message"]["chat"]["id"]) != str(CHAT_ID):
+                if chat != str(CHAT_ID):
                     continue
 
                 if text == "/stop":
                     BOT_RUNNING = False
                     send("🛑 BOT DETENIDO")
 
-                if text == "/start":
+                elif text == "/start":
                     BOT_RUNNING = True
                     send("🚀 BOT ACTIVADO")
 
     except:
         pass
 
-# ================= IQ OPTION =================
+# ================= IQ =================
 
 def connect():
     while True:
@@ -85,7 +84,7 @@ def connect():
             status, _ = iq.connect()
             if status:
                 iq.change_balance("PRACTICE")
-                send("🔥 BOT SNIPER ACTIVO")
+                send("🔥 BOT ACTIVO")
                 return iq
         except:
             pass
@@ -115,7 +114,6 @@ def main():
 
     while True:
         try:
-            # 🔥 CONTROL TELEGRAM
             check_telegram()
 
             if not BOT_RUNNING:
@@ -169,7 +167,9 @@ def main():
                 status, trade_id = iq.buy(BASE_AMOUNT, pair, direction, EXPIRATION)
 
                 if status:
-                    send(f"🎯 {pair} {direction.upper()}")
+                    # 🔥 MENSAJE PRO
+                    tipo = "COMPRA" if direction == "call" else "VENTA"
+                    send(f"🎯 {pair} {tipo} 3 MINUTOS")
 
                     risk.register_trade()
 
