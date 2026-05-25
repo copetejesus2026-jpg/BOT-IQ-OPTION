@@ -24,17 +24,11 @@ TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
 TIMEFRAME_M30 = 1800
 
-# 🔥 SOLO 9 PARES
 PAIRS = [
-    "EURUSD-OTC",
-    "GBPUSD-OTC",
-    "USDCHF-OTC",
-    "EURGBP-OTC",
-    "EURJPY-OTC",
-    "EURCAD-OTC",
-    "GBPCAD-OTC",
-    "AUDJPY-OTC",
-    "CADJPY-OTC"
+    "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC",
+    "EURGBP-OTC","EURJPY-OTC",
+    "EURCAD-OTC","GBPCAD-OTC",
+    "AUDJPY-OTC","CADJPY-OTC"
 ]
 
 BOT_RUNNING = False
@@ -88,7 +82,7 @@ def connect():
             status, _ = iq.connect()
             if status:
                 iq.change_balance("PRACTICE")
-                send("🔥 BOT LISTO (usa /Star)")
+                send("🔥 BOT PRO LISTO (/Star)")
                 return iq
         except:
             pass
