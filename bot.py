@@ -18,10 +18,11 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 3
-BASE_AMOUNT = 2000
+BASE_AMOUNT = 20000
 
 TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
+TIMEFRAME_M15 = 900
 
 PAIRS = [
     "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","EURGBP-OTC","EURJPY-OTC",
@@ -130,16 +131,17 @@ def main():
                 for pair in PAIRS:
                     df1 = get_df(iq, pair, TIMEFRAME_M1)
                     df5 = get_df(iq, pair, TIMEFRAME_M5)
+                    df15 = get_df(iq, pair, TIMEFRAME_M15)
 
-                    if df1 is None or df5 is None:
+                    if df1 is None or df5 is None or df15 is None:
                         continue
 
-                    score = score_market(df1, df5)
+                    score = score_market(df1, df5, df15)
 
-                    if score < 5:
+                    if score < 6:
                         continue
 
-                    s = get_signal(df1, df5)
+                    s = get_signal(df1, df5, df15)
 
                     if s and score > best_score:
                         best_score = score
@@ -165,8 +167,9 @@ def main():
                 status, trade_id = iq.buy(BASE_AMOUNT, pair, direction, EXPIRATION)
 
                 if status:
+                    # 🔥 MENSAJE PRO
                     tipo = "COMPRA" if direction == "call" else "VENTA"
-                    send(f"{pair} {tipo} 3 MINUTOS")
+                    send(f"🎯 {pair} {tipo} 3 MINUTOS")
 
                     risk.register_trade()
 
