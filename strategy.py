@@ -1,7 +1,5 @@
 import numpy as np
 
-# ================= BASICOS =================
-
 def body(c):
     return abs(c["close"] - c["open"])
 
@@ -28,108 +26,103 @@ def trend(df):
 
     return None
 
-def macro_trend(df15):
-    return trend(df15)
-
 # ================= FILTROS =================
 
-# 🔴 CONSOLIDACIÓN
 def is_ranging(df):
     return (df["high"].max() - df["low"].min()) < np.mean(df["high"] - df["low"]) * 2
 
-# 🔴 AGOTAMIENTO
 def is_exhausted(df):
     moves = np.abs(df["close"] - df["open"])
-    return moves.iloc[-1] < np.mean(moves) * 0.5
+    return moves.iloc[-1] < np.mean(moves) * 0.6
 
-# 🔴 ENTRADA TARDE
-def late_entry(df):
-    last3 = df.iloc[-3:]
-    bullish_count = sum(1 for _, c in last3.iterrows() if bullish(c))
-    bearish_count = sum(1 for _, c in last3.iterrows() if bearish(c))
-    return bullish_count >= 3 or bearish_count >= 3
+def late_trend(df):
+    closes = df["close"].values
+    count = 0
 
-# 🔴 ZONA YA RESPETADA (RECHAZO PREVIO)
-def already_reacted(df):
-    last5 = df.iloc[-5:]
-    rejections = 0
+    for i in range(-1, -6, -1):
+        if closes[i] > closes[i-1]:
+            count += 1
 
-    for _, c in last5.iterrows():
-        upper = c["high"] - max(c["open"], c["close"])
-        lower = min(c["open"], c["close"]) - c["low"]
+    return count >= 4
 
-        if upper > body(c) or lower > body(c):
-            rejections += 1
-
-    return rejections >= 3
-
-# 🔴 MOVIMIENTO EXTENDIDO
 def overextended(df):
     last = df.iloc[-1]
     avg = np.mean(df["high"] - df["low"])
-    return range_c(last) > avg * 1.8
+    return range_c(last) > avg * 1.6
 
-# ================= ESTRUCTURA =================
+# ================= BOS (CLAVE) =================
 
 def break_of_structure(df):
     highs = df["high"].values
     lows = df["low"].values
 
-    if highs[-1] > highs[-2] > highs[-3]:
+    if highs[-1] > highs[-3] and highs[-2] <= highs[-3]:
         return "bullish"
 
-    if lows[-1] < lows[-2] < lows[-3]:
+    if lows[-1] < lows[-3] and lows[-2] >= lows[-3]:
         return "bearish"
 
     return None
 
-def is_pullback(df5, df15):
-    macro = trend(df15)
-    micro = trend(df5)
-    return macro and micro and macro != micro
+# ================= RETEST =================
 
-# ================= MOMENTUM =================
+def small_pullback(df):
+    c1 = df.iloc[-1]
+    c2 = df.iloc[-2]
 
-def strong_move(df):
+    return body(c1) < body(c2)
+
+# ================= IMPULSO =================
+
+def strong_impulse(df):
     moves = np.abs(df["close"] - df["open"])
-    return moves.iloc[-1] > np.mean(moves)
+    return moves.iloc[-1] > np.mean(moves) * 1.2
 
 # ================= ENTRADA =================
 
 def get_signal(df1, df5, df15):
     try:
-        macro = macro_trend(df15)
+        macro = trend(df15)
         micro = trend(df5)
 
-        # ❌ FILTROS CRÍTICOS
+        if not macro or not micro:
+            return None
+
+        if macro != micro:
+            return None
+
+        # ❌ FILTROS
         if is_ranging(df5):
             return None
 
         if is_exhausted(df1):
             return None
 
-        if late_entry(df1):
-            return None
-
-        if already_reacted(df1):
+        if late_trend(df5):
             return None
 
         if overextended(df1):
             return None
 
-        if is_pullback(df5, df15):
-            return None
-
+        # 🔥 BOS (inicio real)
         bos = break_of_structure(df5)
 
-        if macro != micro or bos != micro:
+        if bos != macro:
             return None
 
-        # ✅ ENTRADA LIMPIA
-        if macro == "bullish" and strong_move(df1):
+        # 🔥 RETEST (no entrar en pico)
+        if not small_pullback(df1):
+            return None
+
+        # 🔥 IMPULSO REAL
+        if not strong_impulse(df1):
+            return None
+
+        # 🎯 ENTRADA
+        if macro == "bullish":
             return "call"
 
-        if macro == "bearish" and strong_move(df1):
+        if macro == "bearish":
             return "put"
 
         return None
@@ -143,7 +136,7 @@ def get_signal(df1, df5, df15):
 def score_market(df1, df5, df15):
     score = 0
 
-    if macro_trend(df15):
+    if trend(df15):
         score += 3
 
     if trend(df5):
@@ -152,7 +145,7 @@ def score_market(df1, df5, df15):
     if not is_ranging(df5):
         score += 2
 
-    if strong_move(df1):
-        score += 2
+    if strong_impulse(df1):
+        score += 3
 
     return score
