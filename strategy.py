@@ -1,5 +1,7 @@
 import numpy as np
 
+# ================= BASICOS =================
+
 def body(c):
     return abs(c["close"] - c["open"])
 
@@ -11,6 +13,14 @@ def bullish(c):
 
 def bearish(c):
     return c["close"] < c["open"]
+
+# ================= FUERZA =================
+
+def strong_bull(c):
+    return bullish(c) and body(c) > range_c(c) * 0.6
+
+def strong_bear(c):
+    return bearish(c) and body(c) > range_c(c) * 0.6
 
 # ================= TENDENCIA =================
 
@@ -26,126 +36,97 @@ def trend(df):
 
     return None
 
+# ================= ZONAS =================
+
+def mid_price(df):
+    return (df["high"].max() + df["low"].min()) / 2
+
+def in_discount(df):
+    return df.iloc[-1]["close"] < mid_price(df)
+
+def in_premium(df):
+    return df.iloc[-1]["close"] > mid_price(df)
+
 # ================= FILTROS =================
 
 def is_ranging(df):
-    return (df["high"].max() - df["low"].min()) < np.mean(df["high"] - df["low"]) * 2
+    return (df["high"].max() - df["low"].min()) < np.mean(df["high"] - df["low"]) * 3
 
-def is_exhausted(df):
-    moves = np.abs(df["close"] - df["open"])
-    return moves.iloc[-1] < np.mean(moves) * 0.6
-
-def late_trend(df):
-    closes = df["close"].values
-    count = 0
-
-    for i in range(-1, -6, -1):
-        if closes[i] > closes[i-1]:
-            count += 1
-
-    return count >= 4
-
-def overextended(df):
+def is_overextended(df):
     last = df.iloc[-1]
     avg = np.mean(df["high"] - df["low"])
-    return range_c(last) > avg * 1.6
+    return range_c(last) > avg * 1.8
 
-# ================= BOS (CLAVE) =================
+# ================= PULLBACK REAL =================
 
-def break_of_structure(df):
-    highs = df["high"].values
-    lows = df["low"].values
-
-    if highs[-1] > highs[-3] and highs[-2] <= highs[-3]:
-        return "bullish"
-
-    if lows[-1] < lows[-3] and lows[-2] >= lows[-3]:
-        return "bearish"
-
-    return None
-
-# ================= RETEST =================
-
-def small_pullback(df):
+def valid_pullback(df):
     c1 = df.iloc[-1]
     c2 = df.iloc[-2]
+    c3 = df.iloc[-3]
 
-    return body(c1) < body(c2)
+    return body(c2) < body(c3) and body(c1) > body(c2)
 
-# ================= IMPULSO =================
+# ================= RECHAZO =================
 
-def strong_impulse(df):
-    moves = np.abs(df["close"] - df["open"])
-    return moves.iloc[-1] > np.mean(moves) * 1.2
+def rejection_up(df):
+    c = df.iloc[-1]
+    return bearish(c) and (c["high"] - max(c["open"], c["close"])) > body(c)
 
-# ================= ENTRADA =================
+def rejection_down(df):
+    c = df.iloc[-1]
+    return bullish(c) and (min(c["open"], c["close"]) - c["low"]) > body(c)
 
-def get_signal(df1, df5, df15):
+# ================= SCORE =================
+
+def score_market(df1, df5):
+    score = 0
+
+    if trend(df5):
+        score += 3
+
+    if not is_ranging(df5):
+        score += 3
+
+    if not is_overextended(df1):
+        score += 2
+
+    return score
+
+# ================= ENTRADA PRO =================
+
+def get_signal(df1, df5):
     try:
-        macro = trend(df15)
-        micro = trend(df5)
-
-        if not macro or not micro:
-            return None
-
-        if macro != micro:
-            return None
-
-        # ❌ FILTROS
         if is_ranging(df5):
             return None
 
-        if is_exhausted(df1):
+        if is_overextended(df1):
             return None
 
-        if late_trend(df5):
-            return None
+        t = trend(df5)
 
-        if overextended(df1):
-            return None
+        # ================= VENTAS (ZONA PREMIUM) =================
 
-        # 🔥 BOS (inicio real)
-        bos = break_of_structure(df5)
+        if t == "bullish" and in_premium(df5):
+            if rejection_up(df1):
+                return "put"
 
-        if bos != macro:
-            return None
+        # ================= COMPRAS (ZONA DISCOUNT) =================
 
-        # 🔥 RETEST (no entrar en pico)
-        if not small_pullback(df1):
-            return None
+        if t == "bearish" and in_discount(df5):
+            if rejection_down(df1):
+                return "call"
 
-        # 🔥 IMPULSO REAL
-        if not strong_impulse(df1):
-            return None
+        # ================= CONTINUACION =================
 
-        # 🎯 ENTRADA
-        if macro == "bullish":
-            return "call"
+        if t == "bullish" and in_discount(df5):
+            if valid_pullback(df1) and strong_bull(df1.iloc[-1]):
+                return "call"
 
-        if macro == "bearish":
-            return "put"
+        if t == "bearish" and in_premium(df5):
+            if valid_pullback(df1) and strong_bear(df1.iloc[-1]):
+                return "put"
 
         return None
 
     except:
         return None
-
-
-# ================= SCORE =================
-
-def score_market(df1, df5, df15):
-    score = 0
-
-    if trend(df15):
-        score += 3
-
-    if trend(df5):
-        score += 2
-
-    if not is_ranging(df5):
-        score += 2
-
-    if strong_impulse(df1):
-        score += 3
-
-    return score
