@@ -18,15 +18,28 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-EXPIRATION = 5  # 🔥 CAMBIADO A 5 MIN (MUCHO MÁS ESTABLE)
-BASE_AMOUNT = 10900
+EXPIRATION = 5
+BASE_AMOUNT = 15000
 
 TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
 
 PAIRS = [
-    "EURUSD-OTC","GBPUSD-OTC","USDCHF-OTC","EURGBP-OTC","EURJPY-OTC",
-    "EURCAD-OTC","GBPCAD-OTC","AUDJPY-OTC","CADJPY-OTC"
+    "EURUSD-OTC",
+    "GBPUSD-OTC",
+    "USDCHF-OTC",
+    "EURGBP-OTC",
+    "EURJPY-OTC",
+    "GBPJPY-OTC",
+    "USDJPY-OTC",
+    "AUDUSD-OTC",
+    "USDCAD-OTC",
+    "NZDUSD-OTC",
+    "EURCAD-OTC",
+    "GBPCAD-OTC",
+    "AUDJPY-OTC",
+    "CADJPY-OTC",
+    "CHFJPY-OTC"
 ]
 
 DAILY_TRADES = 0
@@ -34,14 +47,9 @@ MAX_DAILY_TRADES = 10
 CURRENT_DAY = datetime.utcnow().day
 
 LOSS_STREAK = 0
-MAX_LOSS_STREAK = 2
+MAX_LOSS_STREAK = 1
 PAUSE_TIME = 300
 LAST_LOSS = 0
-
-BOT_RUNNING = True
-LAST_UPDATE_ID = None
-
-# ================= TELEGRAM =================
 
 def send(msg):
     if TOKEN and CHAT_ID:
@@ -54,36 +62,11 @@ def send(msg):
         except:
             pass
 
-def check_telegram():
-    global BOT_RUNNING, LAST_UPDATE_ID
-
-    try:
-        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
-        params = {"offset": LAST_UPDATE_ID}
-        res = requests.get(url, params=params).json()
-
-        for update in res.get("result", []):
-            LAST_UPDATE_ID = update["update_id"] + 1
-
-            if "message" in update:
-                text = update["message"].get("text", "").lower()
-                chat = str(update["message"]["chat"]["id"])
-
-                if chat != str(CHAT_ID):
-                    continue
-
-                if text == "/stop":
-                    BOT_RUNNING = False
-                    send("🛑 BOT DETENIDO")
-
-                elif text == "/start":
-                    BOT_RUNNING = True
-                    send("🚀 BOT ACTIVADO")
-
-    except:
-        pass
-
-# ================= IQ =================
+def reset_day():
+    global DAILY_TRADES, CURRENT_DAY
+    if datetime.utcnow().day != CURRENT_DAY:
+        DAILY_TRADES = 0
+        CURRENT_DAY = datetime.utcnow().day
 
 def connect():
     while True:
@@ -92,7 +75,7 @@ def connect():
             status, _ = iq.connect()
             if status:
                 iq.change_balance("PRACTICE")
-                send("🔥 BOT ACTIVO")
+                send("🔥 BOT INSTITUCIONAL ACTIVO")
                 return iq
         except:
             pass
@@ -109,10 +92,8 @@ def get_df(iq, pair, tf):
     except:
         return None
 
-# ================= MAIN =================
-
 def main():
-    global LOSS_STREAK, LAST_LOSS, DAILY_TRADES, BOT_RUNNING
+    global LOSS_STREAK, LAST_LOSS, DAILY_TRADES
 
     iq = connect()
     risk = RiskManager()
@@ -122,15 +103,7 @@ def main():
 
     while True:
         try:
-            check_telegram()
-
-            if not BOT_RUNNING:
-                time.sleep(1)
-                continue
-
-            # reset diario
-            if datetime.utcnow().day != CURRENT_DAY:
-                DAILY_TRADES = 0
+            reset_day()
 
             if DAILY_TRADES >= MAX_DAILY_TRADES:
                 time.sleep(5)
@@ -145,10 +118,13 @@ def main():
             server_time = iq.get_server_timestamp()
             sec = server_time % 60
 
-            # 🔍 ANALISIS
+            # 🔍 ANALISIS ULTRA FILTRADO
             if 45 <= sec <= 58:
                 signal = None
+
                 best_score = 0
+                best_pair = None
+                best_signal = None
 
                 for pair in PAIRS:
                     df1 = get_df(iq, pair, TIMEFRAME_M1)
@@ -159,16 +135,20 @@ def main():
 
                     score = score_market(df1, df5)
 
-                    if score < 6:
+                    if score < 5:
                         continue
 
                     s = get_signal(df1, df5)
 
                     if s and score > best_score:
                         best_score = score
-                        signal = (pair, s)
+                        best_pair = pair
+                        best_signal = s
 
-            # 🎯 ENTRADA
+                if best_pair:
+                    signal = (best_pair, best_signal)
+
+            # 🎯 ENTRADA PERFECT TIMING
             if sec >= 59.5 or sec <= 0.3:
                 candle = int(server_time // 60)
 
@@ -182,6 +162,12 @@ def main():
 
                 pair, direction = signal
 
+                # 🔴 INVERTIR ENTRADAS AQUÍ
+                if direction == "call":
+                    direction = "put"
+                elif direction == "put":
+                    direction = "call"
+
                 if not risk.can_trade():
                     continue
 
@@ -191,17 +177,17 @@ def main():
                     DAILY_TRADES += 1
 
                     tipo = "COMPRA" if direction == "call" else "VENTA"
-                    send(f"🎯 {pair} {tipo} 3 MINUTOS")
+                    send(f"⚡ {pair} {tipo} ({DAILY_TRADES}/10)")
 
                     risk.register_trade()
 
-                    time.sleep(180)
+                    time.sleep(65)
                     result = iq.check_win_v4(trade_id)
 
                     if result < 0:
                         LOSS_STREAK += 1
                         LAST_LOSS = time.time()
-                        send("❌ LOSS")
+                        send(f"❌ LOSS {LOSS_STREAK}")
                     else:
                         LOSS_STREAK = 0
                         send("✅ WIN")
