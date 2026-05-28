@@ -25,10 +25,8 @@ TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
 
 PAIRS = [
-    "EURUSD-OTC", "GBPUSD-OTC", "USDCHF-OTC", "EURGBP-OTC",
-    "EURJPY-OTC", "GBPJPY-OTC", "AUDUSD-OTC",
-    "USDCAD-OTC", "EURCAD-OTC", "GBPCAD-OTC",
-    "AUDJPY-OTC", "CADJPY-OTC", "CHFJPY-OTC"
+    "EURUSD-OTC", "GBPUSD-OTC", "USDCHF-OTC", "EURGBP-OTC", "EURJPY-OTC",
+    "GBPJPY-OTC", "AUDUSD-OTC", "USDCAD-OTC", "EURCAD-OTC", "GBPCAD-OTC", "AUDJPY-OTC", "CADJPY-OTC", "CHFJPY-OTC"
 ]
 
 DAILY_TRADES = 0
@@ -39,6 +37,10 @@ LOSS_STREAK = 0
 MAX_LOSS_STREAK = 1
 PAUSE_TIME = 300
 LAST_LOSS = 0
+
+last_best_pair = None
+last_best_signal = None
+
 
 def send(msg):
     if TOKEN and CHAT_ID:
@@ -51,11 +53,13 @@ def send(msg):
         except:
             pass
 
+
 def reset_day():
     global DAILY_TRADES, CURRENT_DAY
     if datetime.utcnow().day != CURRENT_DAY:
         DAILY_TRADES = 0
         CURRENT_DAY = datetime.utcnow().day
+
 
 def connect():
     while True:
@@ -64,11 +68,12 @@ def connect():
             status, _ = iq.connect()
             if status:
                 iq.change_balance("PRACTICE")
-                send("🔥 BOT INSTITUCIONAL ACTIVO")
+                send("🔥 BOT INSTITUCIONAL PRO ACTIVO")
                 return iq
         except:
             pass
         time.sleep(3)
+
 
 def get_df(iq, pair, tf):
     try:
@@ -81,8 +86,31 @@ def get_df(iq, pair, tf):
     except:
         return None
 
+
+def candle_quality(df):
+    """
+    🛡️ FILTRO INSTITUCIONAL PRO:
+    Evita rangos, mechas largas y baja fuerza.
+    """
+    last = df.iloc[-1]
+
+    body = abs(last["open"] - last["close"])
+    wick_up = last["high"] - max(last["open"], last["close"])
+    wick_down = min(last["open"], last["close"]) - last["low"]
+
+    if wick_up > body * 1.5:
+        return False
+    if wick_down > body * 1.5:
+        return False
+    if body < ((last["high"] - last["low"]) * 0.25):
+        return False
+
+    return True
+
+
 def main():
     global LOSS_STREAK, LAST_LOSS, DAILY_TRADES
+    global last_best_pair, last_best_signal
 
     iq = connect()
     risk = RiskManager()
@@ -107,9 +135,8 @@ def main():
             server_time = iq.get_server_timestamp()
             sec = server_time % 60
 
+            # 🔍 FILTRO INSTITUCIONAL PRO
             if 45 <= sec <= 58:
-                signal = None
-
                 best_score = 0
                 best_pair = None
                 best_signal = None
@@ -121,9 +148,12 @@ def main():
                     if df1 is None or df5 is None:
                         continue
 
+                    if not candle_quality(df1):
+                        continue
+
                     score = score_market(df1, df5)
 
-                    if score < 5:
+                    if score < 6:  # 🔥 Subido para más precisión
                         continue
 
                     s = get_signal(df1, df5)
@@ -134,14 +164,16 @@ def main():
                         best_signal = s
 
                 if best_pair:
+                    last_best_pair = best_pair
+                    last_best_signal = best_signal
                     signal = (best_pair, best_signal)
 
-            if sec >= 59.5 or sec <= 0.3:
+            # 🎯 ENTRADA PERFECTA (ANTI-LAG)
+            if 59.4 <= sec <= 59.98 or 0 <= sec <= 0.25:
                 candle = int(server_time // 60)
 
                 if candle == last_candle:
                     continue
-
                 last_candle = candle
 
                 if not signal:
@@ -149,11 +181,8 @@ def main():
 
                 pair, direction = signal
 
-                # 🔄 INVERSION DE SEÑAL
-                if direction == "call":
-                    direction = "put"
-                elif direction == "put":
-                    direction = "call"
+                # 🔴 INVERSIÓN AUTOMÁTICA
+                direction = "put" if direction == "call" else "call"
 
                 if not risk.can_trade():
                     continue
@@ -184,6 +213,7 @@ def main():
         except Exception as e:
             print("Error:", e)
             time.sleep(2)
+
 
 if __name__ == "__main__":
     main()
