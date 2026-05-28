@@ -7,8 +7,6 @@ import logging
 from datetime import datetime
 
 from iqoptionapi.stable_api import IQ_Option
-from strategy import get_signal, score_market
-from risk import RiskManager
 
 logging.getLogger().setLevel(logging.CRITICAL)
 sys.stderr = open(os.devnull, 'w')
@@ -26,8 +24,51 @@ TIMEFRAME_M5 = 300
 
 PAIRS = [
     "EURUSD-OTC", "GBPUSD-OTC", "USDCHF-OTC", "EURGBP-OTC", "EURJPY-OTC",
-    "GBPJPY-OTC", "AUDUSD-OTC", "USDCAD-OTC", "EURCAD-OTC", "GBPCAD-OTC", "AUDJPY-OTC", "CADJPY-OTC", "CHFJPY-OTC"
+    "GBPJPY-OTC", "USDJPY-OTC", "AUDUSD-OTC", "USDCAD-OTC", "NZDUSD-OTC",
+    "EURCAD-OTC", "GBPCAD-OTC", "AUDJPY-OTC", "CADJPY-OTC", "CHFJPY-OTC"
 ]
+
+
+# ====================================================
+#   ✔ TEMPORAL: ERES LIBRE DE REEMPLAZAR LUEGO
+# ====================================================
+class RiskManager:
+    def __init__(self):
+        self.daily = 0
+        self.max_daily = 10
+
+    def can_trade(self):
+        return self.daily < self.max_daily
+
+    def register_trade(self):
+        self.daily += 1
+
+
+def get_signal(df1, df5):
+    """
+    Señal simple temporal para que no falle el bot.
+    (Luego la reemplazaré por tu estrategia PRO)
+    """
+    last = df1.iloc[-1]
+    if last["close"] > last["open"]:
+        return "call"
+    else:
+        return "put"
+
+
+def score_market(df1, df5):
+    """
+    Puntuación simple para no romper el bot.
+    Luego la reemplazo por tu sistema PRO.
+    """
+    rng = abs(df1["close"].iloc[-1] - df1["open"].iloc[-1])
+    return 7 if rng > 0 else 3
+
+
+# ====================================================
+#   ✔ FIN DE MÓDULOS TEMPORALES
+# ====================================================
+
 
 DAILY_TRADES = 0
 MAX_DAILY_TRADES = 10
@@ -88,10 +129,6 @@ def get_df(iq, pair, tf):
 
 
 def candle_quality(df):
-    """
-    🛡️ FILTRO INSTITUCIONAL PRO:
-    Evita rangos, mechas largas y baja fuerza.
-    """
     last = df.iloc[-1]
 
     body = abs(last["open"] - last["close"])
@@ -135,7 +172,6 @@ def main():
             server_time = iq.get_server_timestamp()
             sec = server_time % 60
 
-            # 🔍 FILTRO INSTITUCIONAL PRO
             if 45 <= sec <= 58:
                 best_score = 0
                 best_pair = None
@@ -153,7 +189,7 @@ def main():
 
                     score = score_market(df1, df5)
 
-                    if score < 6:  # 🔥 Subido para más precisión
+                    if score < 6:
                         continue
 
                     s = get_signal(df1, df5)
@@ -168,7 +204,6 @@ def main():
                     last_best_signal = best_signal
                     signal = (best_pair, best_signal)
 
-            # 🎯 ENTRADA PERFECTA (ANTI-LAG)
             if 59.4 <= sec <= 59.98 or 0 <= sec <= 0.25:
                 candle = int(server_time // 60)
 
@@ -181,7 +216,6 @@ def main():
 
                 pair, direction = signal
 
-                # 🔴 INVERSIÓN AUTOMÁTICA
                 direction = "put" if direction == "call" else "call"
 
                 if not risk.can_trade():
