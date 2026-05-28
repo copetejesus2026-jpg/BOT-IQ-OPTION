@@ -1,132 +1,85 @@
-import numpy as np
+import pandas as pd
 
-# ================= BASICOS =================
 
-def body(c):
-    return abs(c["close"] - c["open"])
+class StrategyPRO:
 
-def range_c(c):
-    return c["high"] - c["low"]
+    def __init__(self):
+        pass
 
-def bullish(c):
-    return c["close"] > c["open"]
+    # -------------------------------------------
+    # DETERMINAR DIRECCIÓN DE PRECIO (M1 Y M5)
+    # -------------------------------------------
+    def get_direction(self, df: pd.DataFrame):
+        last = df.iloc[-1]
+        prev = df.iloc[-2]
 
-def bearish(c):
-    return c["close"] < c["open"]
+        # Cuerpo de vela
+        body = abs(last["close"] - last["open"])
+        total = last["high"] - last["low"]
 
-# ================= FUERZA =================
+        # Rechazos
+        wick_up = last["high"] - max(last["open"], last["close"])
+        wick_down = min(last["open"], last["close"]) - last["low"]
 
-def strong_bull(c):
-    return bullish(c) and body(c) > range_c(c) * 0.6
-
-def strong_bear(c):
-    return bearish(c) and body(c) > range_c(c) * 0.6
-
-# ================= TENDENCIA =================
-
-def trend(df):
-    highs = df["high"].values
-    lows = df["low"].values
-
-    if highs[-1] > highs[-2] and lows[-1] > lows[-2]:
-        return "bullish"
-
-    if highs[-1] < highs[-2] and lows[-1] < lows[-2]:
-        return "bearish"
-
-    return None
-
-# ================= ZONAS =================
-
-def mid_price(df):
-    return (df["high"].max() + df["low"].min()) / 2
-
-def in_discount(df):
-    return df.iloc[-1]["close"] < mid_price(df)
-
-def in_premium(df):
-    return df.iloc[-1]["close"] > mid_price(df)
-
-# ================= FILTROS =================
-
-def is_ranging(df):
-    return (df["high"].max() - df["low"].min()) < np.mean(df["high"] - df["low"]) * 3
-
-def is_overextended(df):
-    last = df.iloc[-1]
-    avg = np.mean(df["high"] - df["low"])
-    return range_c(last) > avg * 1.8
-
-# ================= PULLBACK REAL =================
-
-def valid_pullback(df):
-    c1 = df.iloc[-1]
-    c2 = df.iloc[-2]
-    c3 = df.iloc[-3]
-
-    return body(c2) < body(c3) and body(c1) > body(c2)
-
-# ================= RECHAZO =================
-
-def rejection_up(df):
-    c = df.iloc[-1]
-    return bearish(c) and (c["high"] - max(c["open"], c["close"])) > body(c)
-
-def rejection_down(df):
-    c = df.iloc[-1]
-    return bullish(c) and (min(c["open"], c["close"]) - c["low"]) > body(c)
-
-# ================= SCORE =================
-
-def score_market(df1, df5):
-    score = 0
-
-    if trend(df5):
-        score += 3
-
-    if not is_ranging(df5):
-        score += 3
-
-    if not is_overextended(df1):
-        score += 2
-
-    return score
-
-# ================= ENTRADA PRO =================
-
-def get_signal(df1, df5):
-    try:
-        if is_ranging(df5):
+        # Filtro de vela basura
+        if total == 0 or body < total * 0.25:
             return None
 
-        if is_overextended(df1):
-            return None
+        # Vela alcista fuerte
+        if last["close"] > last["open"] and wick_down > body * 0.3:
+            return "call"
 
-        t = trend(df5)
-
-        # ================= VENTAS (ZONA PREMIUM) =================
-
-        if t == "bullish" and in_premium(df5):
-            if rejection_up(df1):
-                return "put"
-
-        # ================= COMPRAS (ZONA DISCOUNT) =================
-
-        if t == "bearish" and in_discount(df5):
-            if rejection_down(df1):
-                return "call"
-
-        # ================= CONTINUACION =================
-
-        if t == "bullish" and in_discount(df5):
-            if valid_pullback(df1) and strong_bull(df1.iloc[-1]):
-                return "call"
-
-        if t == "bearish" and in_premium(df5):
-            if valid_pullback(df1) and strong_bear(df1.iloc[-1]):
-                return "put"
+        # Vela bajista fuerte
+        if last["close"] < last["open"] and wick_up > body * 0.3:
+            return "put"
 
         return None
 
-    except:
+    # -------------------------------------------
+    # PUNTUACIÓN DEL MERCADO
+    # -------------------------------------------
+    def score_market(self, df_m1: pd.DataFrame, df_m5: pd.DataFrame):
+        last1 = df_m1.iloc[-1]
+        last5 = df_m5.iloc[-1]
+
+        # Rango mínimo para evitar consolidación
+        range1 = last1["high"] - last1["low"]
+        range5 = last5["high"] - last5["low"]
+
+        if range1 == 0 or range5 == 0:
+            return 0
+
+        score = 0
+
+        # Rango amplio → buen movimiento
+        if range1 > (range5 / 4):
+            score += 3
+
+        # Cuerpo dominante → intención institucional
+        body = abs(last1["close"] - last1["open"])
+        if body > range1 * 0.65:
+            score += 3
+
+        # Tendencia M5 confirma microdirección M1
+        if (last1["close"] > last1["open"] and last5["close"] > last5["open"]):
+            score += 3
+        if (last1["close"] < last1["open"] and last5["close"] < last5["open"]):
+            score += 3
+
+        return score
+
+    # -------------------------------------------
+    # GENERAR SEÑAL FINAL
+    # -------------------------------------------
+    def get_signal(self, df_m1: pd.DataFrame, df_m5: pd.DataFrame):
+        dir_m1 = self.get_direction(df_m1)
+        dir_m5 = self.get_direction(df_m5)
+
+        if not dir_m1 or not dir_m5:
+            return None
+
+        # Solo operar si M1 y M5 coinciden
+        if dir_m1 == dir_m5:
+            return dir_m1
+
         return None
