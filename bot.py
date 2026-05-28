@@ -25,21 +25,10 @@ TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
 
 PAIRS = [
-    "EURUSD-OTC",
-    "GBPUSD-OTC",
-    "USDCHF-OTC",
-    "EURGBP-OTC",
-    "EURJPY-OTC",
-    "GBPJPY-OTC",
-    "USDJPY-OTC",
-    "AUDUSD-OTC",
-    "USDCAD-OTC",
-    "NZDUSD-OTC",
-    "EURCAD-OTC",
-    "GBPCAD-OTC",
-    "AUDJPY-OTC",
-    "CADJPY-OTC",
-    "CHFJPY-OTC"
+    "EURUSD-OTC", "GBPUSD-OTC", "USDCHF-OTC", "EURGBP-OTC",
+    "EURJPY-OTC", "GBPJPY-OTC", "AUDUSD-OTC",
+    "USDCAD-OTC", "EURCAD-OTC", "GBPCAD-OTC",
+    "AUDJPY-OTC", "CADJPY-OTC", "CHFJPY-OTC"
 ]
 
 DAILY_TRADES = 0
@@ -118,7 +107,6 @@ def main():
             server_time = iq.get_server_timestamp()
             sec = server_time % 60
 
-            # 🔍 ANALISIS ULTRA FILTRADO
             if 45 <= sec <= 58:
                 signal = None
 
@@ -148,7 +136,6 @@ def main():
                 if best_pair:
                     signal = (best_pair, best_signal)
 
-            # 🎯 ENTRADA PERFECT TIMING
             if sec >= 59.5 or sec <= 0.3:
                 candle = int(server_time // 60)
 
@@ -162,7 +149,7 @@ def main():
 
                 pair, direction = signal
 
-                # 🔴 INVERTIR ENTRADAS AQUÍ
+                # 🔄 INVERSION DE SEÑAL
                 if direction == "call":
                     direction = "put"
                 elif direction == "put":
