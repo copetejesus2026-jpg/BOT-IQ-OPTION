@@ -6,80 +6,123 @@ class StrategyPRO:
     def __init__(self):
         pass
 
-    # -------------------------------------------
-    # DETERMINAR DIRECCIÓN DE PRECIO (M1 Y M5)
-    # -------------------------------------------
-    def get_direction(self, df: pd.DataFrame):
-        last = df.iloc[-1]
-        prev = df.iloc[-2]
+    # ======================================================
+    #   LECTURA AVANZADA DE VELA (M1)
+    # ======================================================
+    def read_candle(self, c):
+        body = abs(c["close"] - c["open"])
+        range_total = c["high"] - c["low"]
 
-        # Cuerpo de vela
-        body = abs(last["close"] - last["open"])
-        total = last["high"] - last["low"]
-
-        # Rechazos
-        wick_up = last["high"] - max(last["open"], last["close"])
-        wick_down = min(last["open"], last["close"]) - last["low"]
-
-        # Filtro de vela basura
-        if total == 0 or body < total * 0.25:
+        if range_total == 0:
             return None
 
-        # Vela alcista fuerte
-        if last["close"] > last["open"] and wick_down > body * 0.3:
+        wick_up = c["high"] - max(c["open"], c["close"])
+        wick_down = min(c["open"], c["close"]) - c["low"]
+
+        strong_bull = (c["close"] > c["open"]) and body > range_total * 0.45
+        strong_bear = (c["open"] > c["close"]) and body > range_total * 0.45
+
+        rejection_low = wick_down > body * 0.35
+        rejection_high = wick_up > body * 0.35
+
+        return {
+            "body": body,
+            "range": range_total,
+            "wick_up": wick_up,
+            "wick_down": wick_down,
+            "strong_bull": strong_bull,
+            "strong_bear": strong_bear,
+            "rejection_low": rejection_low,
+            "rejection_high": rejection_high
+        }
+
+    # ======================================================
+    #   TENDENCIA M5 → DIRECCIÓN GLOBAL
+    # ======================================================
+    def trend_m5(self, df):
+        last = df.iloc[-1]
+        prev = df.iloc[-4]
+
+        if last["close"] > prev["close"]:
             return "call"
 
-        # Vela bajista fuerte
-        if last["close"] < last["open"] and wick_up > body * 0.3:
+        if last["close"] < prev["close"]:
             return "put"
 
         return None
 
-    # -------------------------------------------
-    # PUNTUACIÓN DEL MERCADO
-    # -------------------------------------------
-    def score_market(self, df_m1: pd.DataFrame, df_m5: pd.DataFrame):
-        last1 = df_m1.iloc[-1]
-        last5 = df_m5.iloc[-1]
+    # ======================================================
+    #   ESTRUCTURA M1 → ZONA ÓPTIMA DE ENTRADA
+    # ======================================================
+    def structure_m1(self, df):
+        c1 = self.read_candle(df.iloc[-1])
+        c2 = self.read_candle(df.iloc[-2])
+        c3 = self.read_candle(df.iloc[-3])
 
-        # Rango mínimo para evitar consolidación
-        range1 = last1["high"] - last1["low"]
-        range5 = last5["high"] - last5["low"]
-
-        if range1 == 0 or range5 == 0:
-            return 0
-
-        score = 0
-
-        # Rango amplio → buen movimiento
-        if range1 > (range5 / 4):
-            score += 3
-
-        # Cuerpo dominante → intención institucional
-        body = abs(last1["close"] - last1["open"])
-        if body > range1 * 0.65:
-            score += 3
-
-        # Tendencia M5 confirma microdirección M1
-        if (last1["close"] > last1["open"] and last5["close"] > last5["open"]):
-            score += 3
-        if (last1["close"] < last1["open"] and last5["close"] < last5["open"]):
-            score += 3
-
-        return score
-
-    # -------------------------------------------
-    # GENERAR SEÑAL FINAL
-    # -------------------------------------------
-    def get_signal(self, df_m1: pd.DataFrame, df_m5: pd.DataFrame):
-        dir_m1 = self.get_direction(df_m1)
-        dir_m5 = self.get_direction(df_m5)
-
-        if not dir_m1 or not dir_m5:
+        if not c1 or not c2 or not c3:
             return None
 
-        # Solo operar si M1 y M5 coinciden
-        if dir_m1 == dir_m5:
-            return dir_m1
+        # ----------------------------------------------------------
+        # ENTRADAS INVERTIDAS (tal como pediste)
+        # ----------------------------------------------------------
+
+        # =====================================
+        #     ANTES ERA CALL → AHORA PUT
+        # =====================================
+        if (
+            c1["strong_bull"] and 
+            c2["rejection_low"] and 
+            c1["wick_up"] < c1["wick_down"]
+        ):
+            return "put"
+
+        # =====================================
+        #     ANTES ERA CALL → AHORA PUT
+        # =====================================
+        if (
+            c1["strong_bull"] and c2["strong_bull"] and c3["rejection_low"]
+        ):
+            return "put"
+
+        # =====================================
+        #     ANTES ERA PUT → AHORA CALL
+        # =====================================
+        if (
+            c1["strong_bear"] and 
+            c2["rejection_high"] and 
+            c1["wick_down"] < c1["wick_up"]
+        ):
+            return "call"
+
+        # =====================================
+        #     ANTES ERA PUT → AHORA CALL
+        # =====================================
+        if (
+            c1["strong_bear"] and c2["strong_bear"] and c3["rejection_high"]
+        ):
+            return "call"
+
+        return None
+
+    # ======================================================
+    #   SEÑAL FINAL (INVIERTE ENTRADAS)
+    # ======================================================
+    def get_signal(self, df_m1: pd.DataFrame, df_m5: pd.DataFrame):
+
+        trend = self.trend_m5(df_m5)
+        structure = self.structure_m1(df_m1)
+
+        if not trend or not structure:
+            return None
+
+        # ❗ ENTRADAS INVERTIDAS:  
+        # Si estructura dice CALL → damos PUT  
+        # Si estructura dice PUT → damos CALL  
+
+        if structure == "call":
+            return "put"
+
+        if structure == "put":
+            return "call"
 
         return None
