@@ -1,128 +1,132 @@
-import pandas as pd
+import numpy as np
 
+# ================= BASICOS =================
 
-class StrategyPRO:
+def body(c):
+    return abs(c["close"] - c["open"])
 
-    def __init__(self):
-        pass
+def range_c(c):
+    return c["high"] - c["low"]
 
-    # ======================================================
-    #   LECTURA AVANZADA DE VELA (M1)
-    # ======================================================
-    def read_candle(self, c):
-        body = abs(c["close"] - c["open"])
-        range_total = c["high"] - c["low"]
+def bullish(c):
+    return c["close"] > c["open"]
 
-        if range_total == 0:
+def bearish(c):
+    return c["close"] < c["open"]
+
+# ================= FUERZA =================
+
+def strong_bull(c):
+    return bullish(c) and body(c) > range_c(c) * 0.6
+
+def strong_bear(c):
+    return bearish(c) and body(c) > range_c(c) * 0.6
+
+# ================= TENDENCIA =================
+
+def trend(df):
+    highs = df["high"].values
+    lows = df["low"].values
+
+    if highs[-1] > highs[-2] and lows[-1] > lows[-2]:
+        return "bullish"
+
+    if highs[-1] < highs[-2] and lows[-1] < lows[-2]:
+        return "bearish"
+
+    return None
+
+# ================= ZONAS =================
+
+def mid_price(df):
+    return (df["high"].max() + df["low"].min()) / 2
+
+def in_discount(df):
+    return df.iloc[-1]["close"] < mid_price(df)
+
+def in_premium(df):
+    return df.iloc[-1]["close"] > mid_price(df)
+
+# ================= FILTROS =================
+
+def is_ranging(df):
+    return (df["high"].max() - df["low"].min()) < np.mean(df["high"] - df["low"]) * 3
+
+def is_overextended(df):
+    last = df.iloc[-1]
+    avg = np.mean(df["high"] - df["low"])
+    return range_c(last) > avg * 1.8
+
+# ================= PULLBACK REAL =================
+
+def valid_pullback(df):
+    c1 = df.iloc[-1]
+    c2 = df.iloc[-2]
+    c3 = df.iloc[-3]
+
+    return body(c2) < body(c3) and body(c1) > body(c2)
+
+# ================= RECHAZO =================
+
+def rejection_up(df):
+    c = df.iloc[-1]
+    return bearish(c) and (c["high"] - max(c["open"], c["close"])) > body(c)
+
+def rejection_down(df):
+    c = df.iloc[-1]
+    return bullish(c) and (min(c["open"], c["close"]) - c["low"]) > body(c)
+
+# ================= SCORE =================
+
+def score_market(df1, df5):
+    score = 0
+
+    if trend(df5):
+        score += 3
+
+    if not is_ranging(df5):
+        score += 3
+
+    if not is_overextended(df1):
+        score += 2
+
+    return score
+
+# ================= ENTRADA PRO =================
+
+def get_signal(df1, df5):
+    try:
+        if is_ranging(df5):
             return None
 
-        wick_up = c["high"] - max(c["open"], c["close"])
-        wick_down = min(c["open"], c["close"]) - c["low"]
+        if is_overextended(df1):
+            return None
 
-        strong_bull = (c["close"] > c["open"]) and body > range_total * 0.45
-        strong_bear = (c["open"] > c["close"]) and body > range_total * 0.45
+        t = trend(df5)
 
-        rejection_low = wick_down > body * 0.35
-        rejection_high = wick_up > body * 0.35
+        # ================= VENTAS (ZONA PREMIUM) =================
 
-        return {
-            "body": body,
-            "range": range_total,
-            "wick_up": wick_up,
-            "wick_down": wick_down,
-            "strong_bull": strong_bull,
-            "strong_bear": strong_bear,
-            "rejection_low": rejection_low,
-            "rejection_high": rejection_high
-        }
+        if t == "bullish" and in_premium(df5):
+            if rejection_up(df1):
+                return "put"
 
-    # ======================================================
-    #   TENDENCIA M5 → DIRECCIÓN GLOBAL
-    # ======================================================
-    def trend_m5(self, df):
-        last = df.iloc[-1]
-        prev = df.iloc[-4]
+        # ================= COMPRAS (ZONA DISCOUNT) =================
 
-        if last["close"] > prev["close"]:
-            return "call"
+        if t == "bearish" and in_discount(df5):
+            if rejection_down(df1):
+                return "call"
 
-        if last["close"] < prev["close"]:
-            return "put"
+        # ================= CONTINUACION =================
+
+        if t == "bullish" and in_discount(df5):
+            if valid_pullback(df1) and strong_bull(df1.iloc[-1]):
+                return "call"
+
+        if t == "bearish" and in_premium(df5):
+            if valid_pullback(df1) and strong_bear(df1.iloc[-1]):
+                return "put"
 
         return None
 
-    # ======================================================
-    #   ESTRUCTURA M1 → ZONA ÓPTIMA DE ENTRADA
-    # ======================================================
-    def structure_m1(self, df):
-        c1 = self.read_candle(df.iloc[-1])
-        c2 = self.read_candle(df.iloc[-2])
-        c3 = self.read_candle(df.iloc[-3])
-
-        if not c1 or not c2 or not c3:
-            return None
-
-        # ----------------------------------------------------------
-        # ENTRADAS INVERTIDAS (tal como pediste)
-        # ----------------------------------------------------------
-
-        # =====================================
-        #     ANTES ERA CALL → AHORA PUT
-        # =====================================
-        if (
-            c1["strong_bull"] and 
-            c2["rejection_low"] and 
-            c1["wick_up"] < c1["wick_down"]
-        ):
-            return "put"
-
-        # =====================================
-        #     ANTES ERA CALL → AHORA PUT
-        # =====================================
-        if (
-            c1["strong_bull"] and c2["strong_bull"] and c3["rejection_low"]
-        ):
-            return "put"
-
-        # =====================================
-        #     ANTES ERA PUT → AHORA CALL
-        # =====================================
-        if (
-            c1["strong_bear"] and 
-            c2["rejection_high"] and 
-            c1["wick_down"] < c1["wick_up"]
-        ):
-            return "call"
-
-        # =====================================
-        #     ANTES ERA PUT → AHORA CALL
-        # =====================================
-        if (
-            c1["strong_bear"] and c2["strong_bear"] and c3["rejection_high"]
-        ):
-            return "call"
-
-        return None
-
-    # ======================================================
-    #   SEÑAL FINAL (INVIERTE ENTRADAS)
-    # ======================================================
-    def get_signal(self, df_m1: pd.DataFrame, df_m5: pd.DataFrame):
-
-        trend = self.trend_m5(df_m5)
-        structure = self.structure_m1(df_m1)
-
-        if not trend or not structure:
-            return None
-
-        # ❗ ENTRADAS INVERTIDAS:  
-        # Si estructura dice CALL → damos PUT  
-        # Si estructura dice PUT → damos CALL  
-
-        if structure == "call":
-            return "put"
-
-        if structure == "put":
-            return "call"
-
+    except:
         return None
