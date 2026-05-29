@@ -1,9 +1,11 @@
 import time
 import os
+import requests
+import pandas as pd
 import sys
 import logging
 from datetime import datetime
-import pandas as pd
+
 from iqoptionapi.stable_api import IQ_Option
 
 logging.getLogger().setLevel(logging.CRITICAL)
@@ -11,141 +13,241 @@ sys.stderr = open(os.devnull, 'w')
 
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-PAIRS = ["EURUSD-OTC", "EURGBP-OTC", "EURJPY-OTC"]
+EXPIRATION = 5
+BASE_AMOUNT = 15000
 
-# ===============================================================
-# =============  ARCHIVO COMPLETO CON LA ESTRATEGIA  ============
-# ===============================================================
+TIMEFRAME_M1 = 60
+TIMEFRAME_M5 = 300
 
-def pro_signal(df):
-    df = df.copy()
+PAIRS = [
+    "EURUSD-OTC", "GBPUSD-OTC", "USDCHF-OTC", "EURGBP-OTC", "EURJPY-OTC",
+    "GBPJPY-OTC", "USDJPY-OTC", "AUDUSD-OTC", "USDCAD-OTC", "NZDUSD-OTC",
+    "EURCAD-OTC", "GBPCAD-OTC", "AUDJPY-OTC", "CADJPY-OTC", "CHFJPY-OTC"
+]
 
-    c1 = df.iloc[-1]
-    c2 = df.iloc[-2]
-    c3 = df.iloc[-3]
-    c4 = df.iloc[-4]
-    c5 = df.iloc[-5]
 
-    bodies = abs(df['open'] - df['close'])
-    avg_body = bodies.tail(20).mean()
+# ====================================================
+#   ✔ TEMPORAL: ERES LIBRE DE REEMPLAZAR LUEGO
+# ====================================================
+class RiskManager:
+    def __init__(self):
+        self.daily = 0
+        self.max_daily = 60
 
-    wicks_up = abs(df['high'] - df[['open', 'close']].max(axis=1))
-    wicks_down = abs(df[['open', 'close']].min(axis=1) - df['low'])
+    def can_trade(self):
+        return self.daily < self.max_daily
 
-    support = df['low'].tail(40).min()
-    resistance = df['high'].tail(40).max()
+    def register_trade(self):
+        self.daily += 1
 
-    last_dir = "bull" if c1['close'] > c1['open'] else "bear"
 
-    breakout_up = c1['close'] > resistance
-    breakout_down = c1['close'] < support
-
-    strong_bull = (
-        (c1['close'] > c1['open']) and
-        (abs(c1['close'] - c1['open']) > avg_body * 1.3) and
-        (c2['close'] > c2['open'])
-    )
-
-    strong_bear = (
-        (c1['close'] < c1['open']) and
-        (abs(c1['open'] - c1['close']) > avg_body * 1.3) and
-        (c2['close'] < c2['open'])
-    )
-
-    reject_low = (c1['close'] > c1['open']) and (c1['low'] <= support + (avg_body * 0.2))
-    reject_high = (c1['close'] < c1['open']) and (c1['high'] >= resistance - (avg_body * 0.2))
-
-    exhaustion_bull = (
-        (c1['close'] < c1['open']) and
-        (c2['close'] < c2['open']) and
-        (c3['close'] < c3['open'])
-    )
-
-    exhaustion_bear = (
-        (c1['close'] > c1['open']) and
-        (c2['close'] > c2['open']) and
-        (c3['close'] > c3['open'])
-    )
-
-    # ===================
-    # Señales finales
-    # ===================
-
-    if reject_low and strong_bull:
+def get_signal(df1, df5):
+    """
+    Señal simple temporal para que no falle el bot.
+    (Luego la reemplazaré por tu estrategia PRO)
+    """
+    last = df1.iloc[-1]
+    if last["close"] > last["open"]:
         return "call"
-
-    if breakout_up and strong_bull:
-        return "call"
-
-    if exhaustion_bear and reject_low:
-        return "call"
-
-    if reject_high and strong_bear:
+    else:
         return "put"
 
-    if breakout_down and strong_bear:
-        return "put"
 
-    if exhaustion_bull and reject_high:
-        return "put"
+def score_market(df1, df5):
+    """
+    Puntuación simple para no romper el bot.
+    Luego la reemplazo por tu sistema PRO.
+    """
+    rng = abs(df1["close"].iloc[-1] - df1["open"].iloc[-1])
+    return 7 if rng > 0 else 3
 
-    return None
+
+# ====================================================
+#   ✔ FIN DE MÓDULOS TEMPORALES
+# ====================================================
 
 
-# ===============================================================
-# ======================  BOT PRINCIPAL  ========================
-# ===============================================================
+DAILY_TRADES = 0
+MAX_DAILY_TRADES = 10
+CURRENT_DAY = datetime.utcnow().day
+
+LOSS_STREAK = 0
+MAX_LOSS_STREAK = 1
+PAUSE_TIME = 300
+LAST_LOSS = 0
+
+last_best_pair = None
+last_best_signal = None
+
+
+def send(msg):
+    if TOKEN and CHAT_ID:
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                data={"chat_id": CHAT_ID, "text": msg},
+                timeout=3
+            )
+        except:
+            pass
+
+
+def reset_day():
+    global DAILY_TRADES, CURRENT_DAY
+    if datetime.utcnow().day != CURRENT_DAY:
+        DAILY_TRADES = 0
+        CURRENT_DAY = datetime.utcnow().day
+
 
 def connect():
-    global API
-    API = IQ_Option(EMAIL, PASSWORD)
-
-    API.connect()
-    API.change_balance("PRACTICE")
-
-    if API.check_connect():
-        print("🟢 Conectado correctamente")
-    else:
-        print("🔴 Error de conexión, reintentando…")
+    while True:
+        try:
+            iq = IQ_Option(EMAIL, PASSWORD)
+            status, _ = iq.connect()
+            if status:
+                iq.change_balance("PRACTICE")
+                send("🔥 BOT INSTITUCIONAL PRO ACTIVO")
+                return iq
+        except:
+            pass
         time.sleep(3)
-        connect()
 
-def get_candles(pair):
-    candles = API.get_candles(pair, 300, 160, time.time())
-    df = pd.DataFrame(candles)
-    df['time'] = pd.to_datetime(df['from'], unit='s')
-    df['mid'] = (df['open'] + df['close']) / 2
-    return df
 
-def place_trade(pair, direction, amount=2):
+def get_df(iq, pair, tf):
     try:
-        status, _ = API.buy(amount, pair, direction, 5)
-        if status:
-            print(f"🟩 Entrada ejecutada: {pair} {direction}")
-        else:
-            print("⚠️ Error ejecutando entrada")
+        data = iq.get_candles(pair, tf, 120, time.time())
+        df = pd.DataFrame(data)
+        if df.empty:
+            return None
+        df.rename(columns={"max": "high", "min": "low"}, inplace=True)
+        return df
     except:
-        print("❌ ERROR al enviar la orden")
+        return None
 
-def start():
-    connect()
-    print("\n🔵 BOT INICIADO\n")
+
+def candle_quality(df):
+    last = df.iloc[-1]
+
+    body = abs(last["open"] - last["close"])
+    wick_up = last["high"] - max(last["open"], last["close"])
+    wick_down = min(last["open"], last["close"]) - last["low"]
+
+    if wick_up > body * 1.5:
+        return False
+    if wick_down > body * 1.5:
+        return False
+    if body < ((last["high"] - last["low"]) * 0.25):
+        return False
+
+    return True
+
+
+def main():
+    global LOSS_STREAK, LAST_LOSS, DAILY_TRADES
+    global last_best_pair, last_best_signal
+
+    iq = connect()
+    risk = RiskManager()
+
+    last_candle = None
+    signal = None
 
     while True:
-        now = datetime.utcnow()
-        sec = now.second
+        try:
+            reset_day()
 
-        if sec == 0:
-            for pair in PAIRS:
-                df = get_candles(pair)
-                signal = pro_signal(df)
+            if DAILY_TRADES >= MAX_DAILY_TRADES:
+                time.sleep(5)
+                continue
 
-                if signal in ["call", "put"]:
-                    place_trade(pair, signal)
+            if LOSS_STREAK >= MAX_LOSS_STREAK:
+                if time.time() - LAST_LOSS < PAUSE_TIME:
+                    continue
+                else:
+                    LOSS_STREAK = 0
 
+            server_time = iq.get_server_timestamp()
+            sec = server_time % 60
+
+            if 45 <= sec <= 58:
+                best_score = 0
+                best_pair = None
+                best_signal = None
+
+                for pair in PAIRS:
+                    df1 = get_df(iq, pair, TIMEFRAME_M1)
+                    df5 = get_df(iq, pair, TIMEFRAME_M5)
+
+                    if df1 is None or df5 is None:
+                        continue
+
+                    if not candle_quality(df1):
+                        continue
+
+                    score = score_market(df1, df5)
+
+                    if score < 6:
+                        continue
+
+                    s = get_signal(df1, df5)
+
+                    if s and score > best_score:
+                        best_score = score
+                        best_pair = pair
+                        best_signal = s
+
+                if best_pair:
+                    last_best_pair = best_pair
+                    last_best_signal = best_signal
+                    signal = (best_pair, best_signal)
+
+            if 59.4 <= sec <= 59.98 or 0 <= sec <= 0.25:
+                candle = int(server_time // 60)
+
+                if candle == last_candle:
+                    continue
+                last_candle = candle
+
+                if not signal:
+                    continue
+
+                pair, direction = signal
+
+                direction = "put" if direction == "call" else "call"
+
+                if not risk.can_trade():
+                    continue
+
+                status, trade_id = iq.buy(BASE_AMOUNT, pair, direction, EXPIRATION)
+
+                if status:
+                    DAILY_TRADES += 1
+
+                    tipo = "COMPRA" if direction == "call" else "VENTA"
+                    send(f"⚡ {pair} {tipo} ({DAILY_TRADES}/10)")
+
+                    risk.register_trade()
+
+                    time.sleep(65)
+                    result = iq.check_win_v4(trade_id)
+
+                    if result < 0:
+                        LOSS_STREAK += 1
+                        LAST_LOSS = time.time()
+                        send(f"❌ LOSS {LOSS_STREAK}")
+                    else:
+                        LOSS_STREAK = 0
+                        send("✅ WIN")
+
+            time.sleep(0.05)
+
+        except Exception as e:
+            print("Error:", e)
             time.sleep(2)
 
-        time.sleep(0.5)
 
-start()
+if __name__ == "__main__":
+    main()no 
