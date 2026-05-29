@@ -17,7 +17,7 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 EXPIRATION = 5
-BASE_AMOUNT = 15000
+BASE_AMOUNT = 1500
 
 TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
@@ -35,7 +35,7 @@ PAIRS = [
 class RiskManager:
     def __init__(self):
         self.daily = 0
-        self.max_daily = 60
+        self.max_daily = 10
 
     def can_trade(self):
         return self.daily < self.max_daily
@@ -250,4 +250,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()no 
+    main()
