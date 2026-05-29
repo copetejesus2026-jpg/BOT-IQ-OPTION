@@ -1,132 +1,147 @@
 import numpy as np
 
-# ================= BASICOS =================
+# ============================================
+#         PRICE ACTION SIN INDICADORES
+# ============================================
 
-def body(c):
-    return abs(c["close"] - c["open"])
+# ---------------- SOPORTE / RESISTENCIA ----------------
 
-def range_c(c):
-    return c["high"] - c["low"]
+def near_sr(df):
 
-def bullish(c):
-    return c["close"] > c["open"]
+    last = df.iloc[-1]
+    close = last["close"]
 
-def bearish(c):
-    return c["close"] < c["open"]
+    high_zone = df["high"].rolling(50).max().iloc[-2]
+    low_zone = df["low"].rolling(50).min().iloc[-2]
 
-# ================= FUERZA =================
+    # cerca soporte/resistencia
+    if abs(close - high_zone) < (high_zone - low_zone) * 0.05:
+        return True
 
-def strong_bull(c):
-    return bullish(c) and body(c) > range_c(c) * 0.6
+    if abs(close - low_zone) < (high_zone - low_zone) * 0.05:
+        return True
 
-def strong_bear(c):
-    return bearish(c) and body(c) > range_c(c) * 0.6
+    return False
 
-# ================= TENDENCIA =================
+# ---------------- AGOTAMIENTO ----------------
 
-def trend(df):
-    highs = df["high"].values
-    lows = df["low"].values
+def exhaustion(df):
 
-    if highs[-1] > highs[-2] and lows[-1] > lows[-2]:
-        return "bullish"
+    last = df.iloc[-1]
+    move = abs(df["close"].iloc[-1] - df["close"].iloc[-8])
 
-    if highs[-1] < highs[-2] and lows[-1] < lows[-2]:
-        return "bearish"
+    rango = df["high"].max() - df["low"].min()
+
+    # movimiento extendido
+    return move > rango * 0.25
+
+# ---------------- RECHAZO DE ZONAS ----------------
+
+def rejection(df, direction):
+
+    last = df.iloc[-1]
+    body = abs(last["close"] - last["open"])
+
+    upper = last["high"] - max(last["open"], last["close"])
+    lower = min(last["open"], last["close"]) - last["low"]
+
+    if body == 0:
+        return False
+
+    # rechazo arriba → no hacer CALL
+    if direction == "call" and upper > body * 1.2:
+        return True
+
+    # rechazo abajo → no hacer PUT
+    if direction == "put" and lower > body * 1.2:
+        return True
+
+    return False
+
+# ---------------- CONTINUIDAD ----------------
+
+def strong_candle(c):
+
+    body = abs(c["close"] - c["open"])
+    rango = c["high"] - c["low"]
+
+    if rango == 0:
+        return False
+
+    return (body / rango) > 0.6
+
+
+def continuation(df, direction):
+
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    if direction == "call":
+
+        if (
+            last["close"] > last["open"] and
+            prev["close"] < prev["open"] and
+            last["close"] > prev["high"] and
+            strong_candle(last)
+        ):
+            return True
+
+    if direction == "put":
+
+        if (
+            last["close"] < last["open"] and
+            prev["close"] > prev["open"] and
+            last["close"] < prev["low"] and
+            strong_candle(last)
+        ):
+            return True
+
+    return False
+
+# ---------------- DIRECCIÓN PRINCIPAL ----------------
+# solo estructura: rompe máximos → call / rompe mínimos → put
+
+def trend_direction(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    # ruptura hacia arriba
+    if last["close"] > prev["high"]:
+        return "call"
+
+    # ruptura hacia abajo
+    if last["close"] < prev["low"]:
+        return "put"
 
     return None
 
-# ================= ZONAS =================
+# ---------------- SEÑAL FINAL ----------------
 
-def mid_price(df):
-    return (df["high"].max() + df["low"].min()) / 2
+def pro_signal(df):
 
-def in_discount(df):
-    return df.iloc[-1]["close"] < mid_price(df)
-
-def in_premium(df):
-    return df.iloc[-1]["close"] > mid_price(df)
-
-# ================= FILTROS =================
-
-def is_ranging(df):
-    return (df["high"].max() - df["low"].min()) < np.mean(df["high"] - df["low"]) * 3
-
-def is_overextended(df):
-    last = df.iloc[-1]
-    avg = np.mean(df["high"] - df["low"])
-    return range_c(last) > avg * 1.8
-
-# ================= PULLBACK REAL =================
-
-def valid_pullback(df):
-    c1 = df.iloc[-1]
-    c2 = df.iloc[-2]
-    c3 = df.iloc[-3]
-
-    return body(c2) < body(c3) and body(c1) > body(c2)
-
-# ================= RECHAZO =================
-
-def rejection_up(df):
-    c = df.iloc[-1]
-    return bearish(c) and (c["high"] - max(c["open"], c["close"])) > body(c)
-
-def rejection_down(df):
-    c = df.iloc[-1]
-    return bullish(c) and (min(c["open"], c["close"]) - c["low"]) > body(c)
-
-# ================= SCORE =================
-
-def score_market(df1, df5):
-    score = 0
-
-    if trend(df5):
-        score += 3
-
-    if not is_ranging(df5):
-        score += 3
-
-    if not is_overextended(df1):
-        score += 2
-
-    return score
-
-# ================= ENTRADA PRO =================
-
-def get_signal(df1, df5):
-    try:
-        if is_ranging(df5):
-            return None
-
-        if is_overextended(df1):
-            return None
-
-        t = trend(df5)
-
-        # ================= VENTAS (ZONA PREMIUM) =================
-
-        if t == "bullish" and in_premium(df5):
-            if rejection_up(df1):
-                return "put"
-
-        # ================= COMPRAS (ZONA DISCOUNT) =================
-
-        if t == "bearish" and in_discount(df5):
-            if rejection_down(df1):
-                return "call"
-
-        # ================= CONTINUACION =================
-
-        if t == "bullish" and in_discount(df5):
-            if valid_pullback(df1) and strong_bull(df1.iloc[-1]):
-                return "call"
-
-        if t == "bearish" and in_premium(df5):
-            if valid_pullback(df1) and strong_bear(df1.iloc[-1]):
-                return "put"
-
+    # datos insuficientes
+    if len(df) < 160:
         return None
 
-    except:
+    direction = trend_direction(df)
+
+    if direction is None:
         return None
+
+    # evitar zonas
+    if near_sr(df):
+        return None
+
+    # evitar agotamiento
+    if exhaustion(df):
+        return None
+
+    # verificar continuidad del movimiento
+    if not continuation(df, direction):
+        return None
+
+    # rechazo fuerte invalida la entrada
+    if rejection(df, direction):
+        return None
+
+    return direction
