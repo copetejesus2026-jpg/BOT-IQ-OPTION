@@ -2,133 +2,150 @@ import time
 import os
 import sys
 import logging
-import requests
+from datetime import datetime
 import pandas as pd
-
-try:
-    from iqoptionapi.stable_api import IQ_Option
-except ImportError:
-    print("❌ iqoptionapi no instalado")
-    time.sleep(60)
-    exit()
-
-from strategy_pa import pro_signal   # ← ARCHIVO 2
-
-# ================= CONFIGURACIÓN =================
+from iqoptionapi.stable_api import IQ_Option
 
 logging.getLogger().setLevel(logging.CRITICAL)
 sys.stderr = open(os.devnull, 'w')
 
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-EXPIRATION = 5   # ← ENTRADAS A 5 MIN
-AMOUNT = 3500
+PAIRS = ["EURUSD-OTC", "EURGBP-OTC", "EURJPY-OTC"]
 
-PAIRS = [
-    "EURUSD-OTC",
-    "EURGBP-OTC",
-    "EURJPY-OTC"
-]
+# ===============================================================
+# =============  ARCHIVO COMPLETO CON LA ESTRATEGIA  ============
+# ===============================================================
 
-# ================= TELEGRAM =================
+def pro_signal(df):
+    df = df.copy()
 
-def send(msg):
-    if not TOKEN or not CHAT_ID:
-        return
+    c1 = df.iloc[-1]
+    c2 = df.iloc[-2]
+    c3 = df.iloc[-3]
+    c4 = df.iloc[-4]
+    c5 = df.iloc[-5]
+
+    bodies = abs(df['open'] - df['close'])
+    avg_body = bodies.tail(20).mean()
+
+    wicks_up = abs(df['high'] - df[['open', 'close']].max(axis=1))
+    wicks_down = abs(df[['open', 'close']].min(axis=1) - df['low'])
+
+    support = df['low'].tail(40).min()
+    resistance = df['high'].tail(40).max()
+
+    last_dir = "bull" if c1['close'] > c1['open'] else "bear"
+
+    breakout_up = c1['close'] > resistance
+    breakout_down = c1['close'] < support
+
+    strong_bull = (
+        (c1['close'] > c1['open']) and
+        (abs(c1['close'] - c1['open']) > avg_body * 1.3) and
+        (c2['close'] > c2['open'])
+    )
+
+    strong_bear = (
+        (c1['close'] < c1['open']) and
+        (abs(c1['open'] - c1['close']) > avg_body * 1.3) and
+        (c2['close'] < c2['open'])
+    )
+
+    reject_low = (c1['close'] > c1['open']) and (c1['low'] <= support + (avg_body * 0.2))
+    reject_high = (c1['close'] < c1['open']) and (c1['high'] >= resistance - (avg_body * 0.2))
+
+    exhaustion_bull = (
+        (c1['close'] < c1['open']) and
+        (c2['close'] < c2['open']) and
+        (c3['close'] < c3['open'])
+    )
+
+    exhaustion_bear = (
+        (c1['close'] > c1['open']) and
+        (c2['close'] > c2['open']) and
+        (c3['close'] > c3['open'])
+    )
+
+    # ===================
+    # Señales finales
+    # ===================
+
+    if reject_low and strong_bull:
+        return "call"
+
+    if breakout_up and strong_bull:
+        return "call"
+
+    if exhaustion_bear and reject_low:
+        return "call"
+
+    if reject_high and strong_bear:
+        return "put"
+
+    if breakout_down and strong_bear:
+        return "put"
+
+    if exhaustion_bull and reject_high:
+        return "put"
+
+    return None
+
+
+# ===============================================================
+# ======================  BOT PRINCIPAL  ========================
+# ===============================================================
+
+def connect():
+    global API
+    API = IQ_Option(EMAIL, PASSWORD)
+
+    API.connect()
+    API.change_balance("PRACTICE")
+
+    if API.check_connect():
+        print("🟢 Conectado correctamente")
+    else:
+        print("🔴 Error de conexión, reintentando…")
+        time.sleep(3)
+        connect()
+
+def get_candles(pair):
+    candles = API.get_candles(pair, 300, 160, time.time())
+    df = pd.DataFrame(candles)
+    df['time'] = pd.to_datetime(df['from'], unit='s')
+    df['mid'] = (df['open'] + df['close']) / 2
+    return df
+
+def place_trade(pair, direction, amount=2):
     try:
-        requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg},
-            timeout=5
-        )
-    except:
-        pass
-
-# ================= CONEXIÓN =================
-
-def connect_iq():
-    while True:
-        try:
-            iq = IQ_Option(EMAIL, PASSWORD)
-            status, _ = iq.connect()
-            if status:
-                iq.change_balance("PRACTICE")
-                send("✅ Bot Price Action conectado")
-                return iq
-        except:
-            pass
-        time.sleep(5)
-
-iq = connect_iq()
-
-print("🔥 BOT PRICE ACTION — SOLO PA · ESTRUCTURA DEL PRECIO")
-send("🔥 BOT PRICE ACTION — SOLO PA · ESTRUCTURA DEL PRECIO")
-
-# ================= OBTENER DATOS =================
-
-def get_data(pair):
-    try:
-        data = iq.get_candles(pair, 60, 160, time.time())  # ← 160 VELAS
-        df = pd.DataFrame(data)
-        if df.empty:
-            return None
-        df.rename(columns={"max": "high", "min": "low"}, inplace=True)
-        return df
-    except:
-        return None
-
-# ================= TRADE =================
-
-def execute(pair, direction):
-    try:
-        status, _ = iq.buy(AMOUNT, pair, direction, EXPIRATION)
-
+        status, _ = API.buy(amount, pair, direction, 5)
         if status:
-            msg = f"🎯 {pair} → {direction.upper()} (5M)"
-            print(msg)
-            send(msg)
+            print(f"🟩 Entrada ejecutada: {pair} {direction}")
+        else:
+            print("⚠️ Error ejecutando entrada")
     except:
-        pass
+        print("❌ ERROR al enviar la orden")
 
-# ================= ESPERA DE VELA NUEVA =================
+def start():
+    connect()
+    print("\n🔵 BOT INICIADO\n")
 
-def wait_new_candle():
     while True:
-        if int(iq.get_server_timestamp()) % 60 == 0:
-            break
-        time.sleep(0.2)
+        now = datetime.utcnow()
+        sec = now.second
 
-# ================= LOOP PRINCIPAL =================
+        if sec == 0:
+            for pair in PAIRS:
+                df = get_candles(pair)
+                signal = pro_signal(df)
 
-last_candle = None
+                if signal in ["call", "put"]:
+                    place_trade(pair, signal)
 
-while True:
-    try:
-        wait_new_candle()
+            time.sleep(2)
 
-        candle = int(iq.get_server_timestamp() // 60)
+        time.sleep(0.5)
 
-        if candle == last_candle:
-            continue
-
-        last_candle = candle
-
-        print("\n⏱ Analizando pares...\n")
-
-        for pair in PAIRS:
-
-            df = get_data(pair)
-            if df is None:
-                continue
-
-            signal = pro_signal(df)  # ← SOLO PRICE ACTION
-
-            if signal:
-                execute(pair, signal)
-
-    except Exception as e:
-        print("Error:", e)
-        time.sleep(2)
+start()
