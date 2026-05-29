@@ -1,12 +1,20 @@
 import time
 import os
-import requests
-import pandas as pd
 import sys
 import logging
-from datetime import datetime
+import requests
+import pandas as pd
 
-from iqoptionapi.stable_api import IQ_Option
+try:
+    from iqoptionapi.stable_api import IQ_Option
+except ImportError:
+    print("❌ iqoptionapi no instalado")
+    time.sleep(60)
+    exit()
+
+from strategy_pa import pro_signal   # ← ARCHIVO 2
+
+# ================= CONFIGURACIÓN =================
 
 logging.getLogger().setLevel(logging.CRITICAL)
 sys.stderr = open(os.devnull, 'w')
@@ -16,109 +24,54 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-EXPIRATION = 5
-BASE_AMOUNT = 1500
-
-TIMEFRAME_M1 = 60
-TIMEFRAME_M5 = 300
+EXPIRATION = 5   # ← ENTRADAS A 5 MIN
+AMOUNT = 3500
 
 PAIRS = [
-    "EURUSD-OTC", "GBPUSD-OTC", "USDCHF-OTC", "EURGBP-OTC", "EURJPY-OTC",
-    "GBPJPY-OTC", "USDJPY-OTC", "AUDUSD-OTC", "USDCAD-OTC", "NZDUSD-OTC",
-    "EURCAD-OTC", "GBPCAD-OTC", "AUDJPY-OTC", "CADJPY-OTC", "CHFJPY-OTC"
+    "EURUSD-OTC",
+    "EURGBP-OTC",
+    "EURJPY-OTC"
 ]
 
-
-# ====================================================
-#   ✔ TEMPORAL: ERES LIBRE DE REEMPLAZAR LUEGO
-# ====================================================
-class RiskManager:
-    def __init__(self):
-        self.daily = 0
-        self.max_daily = 10
-
-    def can_trade(self):
-        return self.daily < self.max_daily
-
-    def register_trade(self):
-        self.daily += 1
-
-
-def get_signal(df1, df5):
-    """
-    Señal simple temporal para que no falle el bot.
-    (Luego la reemplazaré por tu estrategia PRO)
-    """
-    last = df1.iloc[-1]
-    if last["close"] > last["open"]:
-        return "call"
-    else:
-        return "put"
-
-
-def score_market(df1, df5):
-    """
-    Puntuación simple para no romper el bot.
-    Luego la reemplazo por tu sistema PRO.
-    """
-    rng = abs(df1["close"].iloc[-1] - df1["open"].iloc[-1])
-    return 7 if rng > 0 else 3
-
-
-# ====================================================
-#   ✔ FIN DE MÓDULOS TEMPORALES
-# ====================================================
-
-
-DAILY_TRADES = 0
-MAX_DAILY_TRADES = 10
-CURRENT_DAY = datetime.utcnow().day
-
-LOSS_STREAK = 0
-MAX_LOSS_STREAK = 1
-PAUSE_TIME = 300
-LAST_LOSS = 0
-
-last_best_pair = None
-last_best_signal = None
-
+# ================= TELEGRAM =================
 
 def send(msg):
-    if TOKEN and CHAT_ID:
-        try:
-            requests.post(
-                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                data={"chat_id": CHAT_ID, "text": msg},
-                timeout=3
-            )
-        except:
-            pass
+    if not TOKEN or not CHAT_ID:
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            data={"chat_id": CHAT_ID, "text": msg},
+            timeout=5
+        )
+    except:
+        pass
 
+# ================= CONEXIÓN =================
 
-def reset_day():
-    global DAILY_TRADES, CURRENT_DAY
-    if datetime.utcnow().day != CURRENT_DAY:
-        DAILY_TRADES = 0
-        CURRENT_DAY = datetime.utcnow().day
-
-
-def connect():
+def connect_iq():
     while True:
         try:
             iq = IQ_Option(EMAIL, PASSWORD)
             status, _ = iq.connect()
             if status:
                 iq.change_balance("PRACTICE")
-                send("🔥 BOT INSTITUCIONAL PRO ACTIVO")
+                send("✅ Bot Price Action conectado")
                 return iq
         except:
             pass
-        time.sleep(3)
+        time.sleep(5)
 
+iq = connect_iq()
 
-def get_df(iq, pair, tf):
+print("🔥 BOT PRICE ACTION — SOLO PA · ESTRUCTURA DEL PRECIO")
+send("🔥 BOT PRICE ACTION — SOLO PA · ESTRUCTURA DEL PRECIO")
+
+# ================= OBTENER DATOS =================
+
+def get_data(pair):
     try:
-        data = iq.get_candles(pair, tf, 120, time.time())
+        data = iq.get_candles(pair, 60, 160, time.time())  # ← 160 VELAS
         df = pd.DataFrame(data)
         if df.empty:
             return None
@@ -127,127 +80,55 @@ def get_df(iq, pair, tf):
     except:
         return None
 
+# ================= TRADE =================
 
-def candle_quality(df):
-    last = df.iloc[-1]
+def execute(pair, direction):
+    try:
+        status, _ = iq.buy(AMOUNT, pair, direction, EXPIRATION)
 
-    body = abs(last["open"] - last["close"])
-    wick_up = last["high"] - max(last["open"], last["close"])
-    wick_down = min(last["open"], last["close"]) - last["low"]
+        if status:
+            msg = f"🎯 {pair} → {direction.upper()} (5M)"
+            print(msg)
+            send(msg)
+    except:
+        pass
 
-    if wick_up > body * 1.5:
-        return False
-    if wick_down > body * 1.5:
-        return False
-    if body < ((last["high"] - last["low"]) * 0.25):
-        return False
+# ================= ESPERA DE VELA NUEVA =================
 
-    return True
-
-
-def main():
-    global LOSS_STREAK, LAST_LOSS, DAILY_TRADES
-    global last_best_pair, last_best_signal
-
-    iq = connect()
-    risk = RiskManager()
-
-    last_candle = None
-    signal = None
-
+def wait_new_candle():
     while True:
-        try:
-            reset_day()
+        if int(iq.get_server_timestamp()) % 60 == 0:
+            break
+        time.sleep(0.2)
 
-            if DAILY_TRADES >= MAX_DAILY_TRADES:
-                time.sleep(5)
+# ================= LOOP PRINCIPAL =================
+
+last_candle = None
+
+while True:
+    try:
+        wait_new_candle()
+
+        candle = int(iq.get_server_timestamp() // 60)
+
+        if candle == last_candle:
+            continue
+
+        last_candle = candle
+
+        print("\n⏱ Analizando pares...\n")
+
+        for pair in PAIRS:
+
+            df = get_data(pair)
+            if df is None:
                 continue
 
-            if LOSS_STREAK >= MAX_LOSS_STREAK:
-                if time.time() - LAST_LOSS < PAUSE_TIME:
-                    continue
-                else:
-                    LOSS_STREAK = 0
+            signal = pro_signal(df)  # ← SOLO PRICE ACTION
 
-            server_time = iq.get_server_timestamp()
-            sec = server_time % 60
+            if signal:
+                execute(pair, signal)
 
-            if 45 <= sec <= 58:
-                best_score = 0
-                best_pair = None
-                best_signal = None
-
-                for pair in PAIRS:
-                    df1 = get_df(iq, pair, TIMEFRAME_M1)
-                    df5 = get_df(iq, pair, TIMEFRAME_M5)
-
-                    if df1 is None or df5 is None:
-                        continue
-
-                    if not candle_quality(df1):
-                        continue
-
-                    score = score_market(df1, df5)
-
-                    if score < 6:
-                        continue
-
-                    s = get_signal(df1, df5)
-
-                    if s and score > best_score:
-                        best_score = score
-                        best_pair = pair
-                        best_signal = s
-
-                if best_pair:
-                    last_best_pair = best_pair
-                    last_best_signal = best_signal
-                    signal = (best_pair, best_signal)
-
-            if 59.4 <= sec <= 59.98 or 0 <= sec <= 0.25:
-                candle = int(server_time // 60)
-
-                if candle == last_candle:
-                    continue
-                last_candle = candle
-
-                if not signal:
-                    continue
-
-                pair, direction = signal
-
-                direction = "put" if direction == "call" else "call"
-
-                if not risk.can_trade():
-                    continue
-
-                status, trade_id = iq.buy(BASE_AMOUNT, pair, direction, EXPIRATION)
-
-                if status:
-                    DAILY_TRADES += 1
-
-                    tipo = "COMPRA" if direction == "call" else "VENTA"
-                    send(f"⚡ {pair} {tipo} ({DAILY_TRADES}/10)")
-
-                    risk.register_trade()
-
-                    time.sleep(65)
-                    result = iq.check_win_v4(trade_id)
-
-                    if result < 0:
-                        LOSS_STREAK += 1
-                        LAST_LOSS = time.time()
-                        send(f"❌ LOSS {LOSS_STREAK}")
-                    else:
-                        LOSS_STREAK = 0
-                        send("✅ WIN")
-
-            time.sleep(0.05)
-
-        except Exception as e:
-            print("Error:", e)
-            time.sleep(2)
-
-
-if __name__ == "__main__":
-    main()
+    except Exception as e:
+        print("Error:", e)
+        time.sleep(2)
