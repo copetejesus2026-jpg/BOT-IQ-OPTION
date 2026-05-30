@@ -27,7 +27,6 @@ def near_sr(df):
 
 def exhaustion(df):
 
-    last = df.iloc[-1]
     move = abs(df["close"].iloc[-1] - df["close"].iloc[-8])
 
     rango = df["high"].max() - df["low"].min()
@@ -48,12 +47,11 @@ def rejection(df, direction):
     if body == 0:
         return False
 
-    # rechazo arriba → no hacer CALL
-    if direction == "call" and upper > body * 1.2:
+    # lógica invertida
+    if direction == "call" and lower > body * 1.2:
         return True
 
-    # rechazo abajo → no hacer PUT
-    if direction == "put" and lower > body * 1.2:
+    if direction == "put" and upper > body * 1.2:
         return True
 
     return False
@@ -76,17 +74,9 @@ def continuation(df, direction):
     last = df.iloc[-1]
     prev = df.iloc[-2]
 
+    # CONTINUIDAD INVERTIDA
+
     if direction == "call":
-
-        if (
-            last["close"] > last["open"] and
-            prev["close"] < prev["open"] and
-            last["close"] > prev["high"] and
-            strong_candle(last)
-        ):
-            return True
-
-    if direction == "put":
 
         if (
             last["close"] < last["open"] and
@@ -96,22 +86,33 @@ def continuation(df, direction):
         ):
             return True
 
+    if direction == "put":
+
+        if (
+            last["close"] > last["open"] and
+            prev["close"] < prev["open"] and
+            last["close"] > prev["high"] and
+            strong_candle(last)
+        ):
+            return True
+
     return False
 
 # ---------------- DIRECCIÓN PRINCIPAL ----------------
-# solo estructura: rompe máximos → call / rompe mínimos → put
+# INVERTIDA
 
 def trend_direction(df):
+
     last = df.iloc[-1]
     prev = df.iloc[-2]
 
-    # ruptura hacia arriba
+    # rompió arriba -> PUT
     if last["close"] > prev["high"]:
-        return "call"
-
-    # ruptura hacia abajo
-    if last["close"] < prev["low"]:
         return "put"
+
+    # rompió abajo -> CALL
+    if last["close"] < prev["low"]:
+        return "call"
 
     return None
 
@@ -136,7 +137,7 @@ def pro_signal(df):
     if exhaustion(df):
         return None
 
-    # verificar continuidad del movimiento
+    # verificar continuidad
     if not continuation(df, direction):
         return None
 
