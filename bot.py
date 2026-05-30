@@ -24,7 +24,7 @@ TIMEFRAME_M5 = 300
 
 PAIRS = [
     "EURUSD-OTC", "GBPUSD-OTC", "USDCHF-OTC", "EURGBP-OTC", "EURJPY-OTC",
-    "GBPJPY-OTC", "USDJPY-OTC", "AUDUSD-OTC", "USDCAD-OTC", "NZDUSD-OTC",
+    "GBPJPY-OTC", "AUDUSD-OTC", "USDCAD-OTC",
     "EURCAD-OTC", "GBPCAD-OTC", "AUDJPY-OTC", "CADJPY-OTC", "CHFJPY-OTC"
 ]
 
@@ -71,7 +71,7 @@ def score_market(df1, df5):
 
 
 DAILY_TRADES = 0
-MAX_DAILY_TRADES = 10
+MAX_DAILY_TRADES = 100
 CURRENT_DAY = datetime.utcnow().day
 
 LOSS_STREAK = 0
@@ -189,7 +189,7 @@ def main():
 
                     score = score_market(df1, df5)
 
-                    if score < 6:
+                    if score < 7:
                         continue
 
                     s = get_signal(df1, df5)
