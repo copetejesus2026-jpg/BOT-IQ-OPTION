@@ -35,7 +35,7 @@ PAIRS = [
 class RiskManager:
     def __init__(self):
         self.daily = 0
-        self.max_daily = 10
+        self.max_daily = 100
 
     def can_trade(self):
         return self.daily < self.max_daily
