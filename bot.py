@@ -189,7 +189,7 @@ def main():
 
                     score = score_market(df1, df5)
 
-                    if score < 13:
+                    if score < 9:
                         continue
 
                     s = get_signal(df1, df5)
