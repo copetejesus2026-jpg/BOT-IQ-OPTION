@@ -16,8 +16,8 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-EXPIRATION = 4
-BASE_AMOUNT = 7500
+EXPIRATION = 1
+BASE_AMOUNT = 20000
 
 TIMEFRAME_M1 = 60
 TIMEFRAME_M5 = 300
@@ -189,7 +189,7 @@ def main():
 
                     score = score_market(df1, df5)
 
-                    if score < 7:
+                    if score < 8:
                         continue
 
                     s = get_signal(df1, df5)
