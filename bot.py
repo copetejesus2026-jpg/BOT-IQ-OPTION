@@ -38,10 +38,10 @@ MAX_LOSS_STREAK = 1             # Para tras 1 pérdida
 PAUSE_TIME = 300                # Pausa 5 min tras pérdida
 MIN_CANDLE_BODY_PERCENT = 0.70  # 70% del rango = Vela FUERTE
 
-# 🚦 CONTROL DE ESTADO DEL BOT (POR TELEGRAM)
-# ✅ CORREGIDO: Variable Global declarada correctamente
-BOT_RUNNING = False              # <-- POR DEFECTO: DETENIDO
-
+# 🚦 VARIABLE GLOBAL PRINCIPAL (DECLARADA AQUÍ ARRIBA)
+# ✅ SOLUCIÓN 1: Variable declarada en el nivel más alto del código
+BOT_RUNNING = False             # <-- POR DEFECTO: DETENIDO
+LAST_UPDATE_ID = 0              # Para evitar leer mensajes repetidos
 
 # ==================================================
 # 🚀 ESTRATEGIA PRO - VERSIÓN: BLOQUEO ESTRICTO
@@ -88,38 +88,19 @@ def fractal_signal(df):
 
 # ---------------- ✅ VERIFICACIÓN CLAVE: VELA ANTERIOR DE CONFIRMACIÓN ----------------
 def vela_anterior_confirma_tendencia(df, direccion):
-    """
-    🛑 REGLA PRINCIPAL DEL USUARIO:
-    La vela ANTERIOR (la #2) DEBE ser una vela fuerte que confirme la dirección.
-    Si NO confirma -> BLOQUEO -> NO OPERA
-    """
     if len(df) < 2: return False
-    
-    vela_anterior = df.iloc[-2]  # ⚠️ VELA ANTERIOR (LA CLAVE)
+    vela_anterior = df.iloc[-2]
     vela_actual = df.iloc[-1]
-
     cuerpo_ant = abs(vela_anterior['close'] - vela_anterior['open'])
     rango_ant = vela_anterior['high'] - vela_anterior['low']
-
     if rango_ant == 0: return False
-
-    # 1. La vela anterior debe ser FUERTE (70% cuerpo)
     es_fuerte = (cuerpo_ant / rango_ant) >= MIN_CANDLE_BODY_PERCENT
-
-    # 2. La vela anterior DEBE ir en la MISMA dirección de la señal
     if direccion == "call":
-        # Para COMPRA: vela anterior debe ser VERDE (cierre > apertura) y romper arriba
         direccion_ok = (vela_anterior['close'] > vela_anterior['open']) and (vela_anterior['close'] > vela_anterior['high'].shift(1).iloc[-2])
-        # Precio actual debe estar por ENCIMA de la vela anterior
         continuacion = vela_actual['low'] > vela_anterior['open']
-
-    else: # direccion == "put"
-        # Para VENTA: vela anterior debe ser ROJA (cierre < apertura) y romper abajo
+    else:
         direccion_ok = (vela_anterior['close'] < vela_anterior['open']) and (vela_anterior['close'] < vela_anterior['low'].shift(1).iloc[-2])
-        # Precio actual debe estar por DEBAJO de la vela anterior
         continuacion = vela_actual['high'] < vela_anterior['open']
-
-    # 🛑 CONDICIÓN TOTAL: SOLO SI TODO ES VERDADERO
     return es_fuerte and direccion_ok and continuacion
 
 # ---------------- ANÁLISIS DE TENDENCIA ----------------
@@ -127,20 +108,8 @@ def get_trend_direction(df):
     cierre = df['close'].values
     minimos = df['low'].values
     maximos = df['high'].values
-
-    # 🟢 TENDENCIA ALCISTA ESTRICTA
-    alcista = (
-        cierre[-1] > cierre[-2] > cierre[-3] > cierre[-4] and
-        cierre[-1] > maximos[-3] and
-        all(cierre[i] > cierre[i-1] for i in range(-1, -5, -1))
-    )
-    # 🔴 TENDENCIA BAJISTA ESTRICTA
-    bajista = (
-        cierre[-1] < cierre[-2] < cierre[-3] < cierre[-4] and
-        cierre[-1] < minimos[-3] and
-        all(cierre[i] < cierre[i-1] for i in range(-1, -5, -1))
-    )
-
+    alcista = (cierre[-1] > cierre[-2] > cierre[-3] > cierre[-4] and cierre[-1] > maximos[-3] and all(cierre[i] > cierre[i-1] for i in range(-1, -5, -1)))
+    bajista = (cierre[-1] < cierre[-2] < cierre[-3] < cierre[-4] and cierre[-1] < minimos[-3] and all(cierre[i] < cierre[i-1] for i in range(-1, -5, -1)))
     if alcista: return "call"
     if bajista: return "put"
     return None
@@ -151,76 +120,49 @@ def zona_clave(df):
     soporte = df['low'].rolling(25).min().iloc[-2]
     rango = resistencia - soporte
     if rango == 0: return False, None
-    umbral = rango * 0.01 # 1% precisión máxima
+    umbral = rango * 0.01
     if abs(ultimo['close'] - resistencia) < umbral: return True, "resistencia"
     if abs(ultimo['close'] - soporte) < umbral: return True, "soporte"
     return False, None
 
 def confirmaciones(df, direccion):
     ultimo = df.iloc[-1]
-    # Bollinger
     boll_ok = False
     if direccion == "call" and ultimo['low'] <= ultimo['lower_band'] * 1.001: boll_ok = True
     if direccion == "put" and ultimo['high'] >= ultimo['upper_band'] * 0.999: boll_ok = True
-    # ZigZag
     zig_ok = False
     if direccion == "call" and df['zigzag'].iloc[-10:].isin([-1]).any(): zig_ok = True
     if direccion == "put" and df['zigzag'].iloc[-10:].isin([1]).any(): zig_ok = True
-    # Fractal
     frac_ok = False
     if direccion == "call" and df['fractal_down'].iloc[-6:].any(): frac_ok = True
-    if direccion == "put" and df['fractal_up'].iloc[-6:].any(): frac_ok = True
+    if direccion == "put" and df['fractal_up'].iloc[-6:).any(): frac_ok = True
     return boll_ok and zig_ok and frac_ok
 
 # ---------------- 🎯 SEÑAL FINAL ----------------
 def get_signal(df1, df5):
-    """
-    LÓGICA DE OPERACIÓN:
-    1. Obtiene Tendencia
-    2. Verifica Zona
-    3. ✅ VERIFICA QUE LA VELA ANTERIOR CONFIRME (SI NO -> BLOQUEO)
-    4. Confirma Indicadores
-    """
     if len(df1) < 80: return None
-
-    # Calcular todo
     df1 = bollinger_bands(df1)
     df1 = zigzag_detection(df1)
     df1 = fractal_signal(df1)
-
-    # Paso 1: Dirección Tendencia
     direccion = get_trend_direction(df1)
     if direccion is None: return None
-
-    # Paso 2: Zona de entrada
     zona_ok, tipo_zona = zona_clave(df1)
     if not zona_ok: return None
-
-    # 🔥🔥🔥 REGLA DECISIVA DEL USUARIO 🔥🔥🔥
-    # SI LA VELA ANTERIOR NO CONFIRMA -> NO OPERA (BLOQUEO)
-    if not vela_anterior_confirma_tendencia(df1, direccion):
-        return None
-
-    # Paso 4: Confirmación indicadores
+    if not vela_anterior_confirma_tendencia(df1, direccion): return None
     if not confirmaciones(df1, direccion): return None
-
-    # Paso 5: Coincidencia final Tendencia + Zona
     if (direccion == "call" and tipo_zona == "soporte") or (direccion == "put" and tipo_zona == "resistencia"):
         return direccion
-
     return None
 
 def score_market(df1, df5):
-    """Puntuación de calidad del mercado"""
     vela = df1.iloc[-1]
     cuerpo = abs(vela['open'] - vela['close'])
     rango = vela['high'] - vela['low']
     if rango == 0: return 0
     calidad = (cuerpo / rango) * 100
-    if calidad >= 70: return 9 # Máxima calidad
+    if calidad >= 70: return 9
     if calidad >= 50: return 6
-    return 3 # Baja calidad
-
+    return 3
 
 # ==================================================
 # 🤖 GESTIÓN DEL BOT - CONEXIÓN, COMANDOS Y EJECUCIÓN
@@ -230,59 +172,44 @@ class RiskManager:
     def __init__(self):
         self.daily = 0
         self.max_daily = MAX_DAILY_TRADES
-
     def can_trade(self):
         return self.daily < self.max_daily
-
     def register_trade(self):
         self.daily += 1
-
 
 DAILY_TRADES = 0
 CURRENT_DAY = datetime.utcnow().day
 LOSS_STREAK = 0
 LAST_LOSS = 0
 
-# ---------------- 🆕 FUNCIÓN NUEVA: LEER COMANDOS TELEGRAM ----------------
+# ---------------- 🆕 FUNCIÓN COMANDOS TELEGRAM - CORREGIDA 100% ----------------
 def check_telegram_commands():
     """
-    Escucha comandos /start y /stop desde Telegram
-    ✅ CORREGIDO: Declaración 'global BOT_RUNNING' para solucionar el error
+    ✅ SOLUCIÓN 2: Declaración GLOBAL explícita al PRINCIPIO de la función
     """
-    global BOT_RUNNING  # <--- ✅ ESTA LÍNEA SOLUCIONA EL ERROR TOTALMENTE
+    global BOT_RUNNING, LAST_UPDATE_ID  # <--- ¡¡¡OBLIGATORIO Y AL INICIO!!!
     try:
-        # Obtener actualizaciones (offset para no leer mensajes antiguos repetidos)
-        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
-        response = requests.get(url, timeout=5).json()
-        
-        if not response.get("ok"):
-            return
-
+        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={LAST_UPDATE_ID + 1}&timeout=5"
+        response = requests.get(url, timeout=10).json()
+        if not response.get("ok"): return
         updates = response.get("result", [])
         for update in updates:
+            LAST_UPDATE_ID = update['update_id']
             if "message" in update and "text" in update["message"]:
                 text = update["message"]["text"].strip().lower()
                 chat_id = str(update["message"]["chat"]["id"])
-
-                # SOLO RESPONDE A TU CHAT ID POR SEGURIDAD
-                if chat_id != str(CHAT_ID):
-                    continue
+                if chat_id != str(CHAT_ID): continue
 
                 # 🟢 COMANDO START
                 if text == "/start":
-                    BOT_RUNNING = True
-                    send("🟢 <b>BOT INICIADO</b>\nEstoy operando en modo estricto.\n✅ Solo con confirmación de vela anterior.\n✅ Solo a favor de tendencia.")
-                    # Limpiar mensajes procesados
-                    requests.get(f"{url}?offset={update['update_id'] + 1}")
-
+                    BOT_RUNNING = True  # <--- Modificamos variable global
+                    send("🟢 <b>BOT INICIADO</b>\n✅ Operando: Solo confirmación vela anterior\n✅ Solo a favor de tendencia")
                 # 🔴 COMANDO STOP
                 elif text == "/stop":
-                    BOT_RUNNING = False
-                    send("🔴 <b>BOT DETENIDO</b>\nHe parado todas las operaciones.\nEscribe /start para volver a activar.")
-                    # Limpiar mensajes procesados
-                    requests.get(f"{url}?offset={update['update_id'] + 1}")
+                    BOT_RUNNING = False # <--- Modificamos variable global
+                    send("🔴 <b>BOT DETENIDO</b>\n⏸️ En pausa. Usa /start para activar.")
     except Exception as e:
-        print("Error comandos:", e)
+        print(f"Error comandos: {e}")
 
 
 def send(msg):
@@ -301,8 +228,9 @@ def reset_day():
         DAILY_TRADES = 0
         CURRENT_DAY = datetime.utcnow().day
         LOSS_STREAK = 0
+        # ✅ Accedemos a global BOT_RUNNING
         if BOT_RUNNING:
-            send("🔄 <b>NUEVO DÍA</b>\nContadores reiniciados. Continúo operando...")
+            send("🔄 <b>NUEVO DÍA</b> | Contadores reiniciados.")
 
 def connect():
     while True:
@@ -311,7 +239,7 @@ def connect():
             status, _ = iq.connect()
             if status:
                 iq.change_balance("PRACTICE") # Cambiar a "REAL" si usas dinero real
-                send("✅ <b>BOT CONECTADO</b>\nSistema listo. Escribe /start para EMPEZAR.")
+                send("✅ <b>BOT CONECTADO</b>\nEscribe /start para EMPEZAR.")
                 return iq
         except Exception as e:
             send(f"❌ Error Conexión: {str(e)}")
@@ -319,11 +247,10 @@ def connect():
 
 def get_df(iq, pair, tf):
     try:
-        data = iq.get_candles(pair, tf, 120, time.time()) # 120 velas historial
+        data = iq.get_candles(pair, tf, 120, time.time())
         df = pd.DataFrame(data)
         if df.empty: return None
         df.rename(columns={"max": "high", "min": "low"}, inplace=True)
-        # Asegurar tipos numéricos
         df['open'] = pd.to_numeric(df['open'])
         df['close'] = pd.to_numeric(df['close'])
         df['high'] = pd.to_numeric(df['high'])
@@ -332,21 +259,18 @@ def get_df(iq, pair, tf):
     except: return None
 
 def candle_quality(df):
-    """Verifica que la vela actual no sea ruidosa"""
     last = df.iloc[-1]
     body = abs(last['open'] - last['close'])
     wick_up = last['high'] - max(last['open'], last['close'])
     wick_down = min(last['open'], last['close']) - last['low']
-    
-    if wick_up > body * 1.2: return False # Mucha mecha arriba = indeciso
-    if wick_down > body * 1.2: return False # Mucha mecha abajo = indeciso
-    if body < ((last['high'] - last['low']) * 0.3): return False # Cuerpo muy pequeño
-
+    if wick_up > body * 1.2: return False
+    if wick_down > body * 1.2: return False
+    if body < ((last['high'] - last['low']) * 0.3): return False
     return True
 
 
 def main():
-    global LOSS_STREAK, LAST_LOSS, DAILY_TRADES
+    global LOSS_STREAK, LAST_LOSS, DAILY_TRADES, BOT_RUNNING # <--- ✅ Global aquí también
     iq = connect()
     risk = RiskManager()
     last_candle = None
@@ -354,107 +278,79 @@ def main():
 
     while True:
         try:
-            # 🆕 SIEMPRE VERIFICAR COMANDOS ANTES DE NADA
+            # Leer comandos SIEMPRE primero
             check_telegram_commands()
             reset_day()
 
-            # 🛑 SI EL BOT ESTÁ DETENIDO -> NO HACE NADA, SOLO ESPERA
+            # ✅ SOLUCIÓN 3: Acceso claro a variable global
             if not BOT_RUNNING:
-                time.sleep(2)
+                time.sleep(1)
                 continue
 
-            # 🔒 LÍMITES DE SEGURIDAD (SOLO SI ESTÁ ACTIVO)
+            # 🔒 LÍMITES DE SEGURIDAD
             if DAILY_TRADES >= MAX_DAILY_TRADES:
-                send("⛔ <b>LÍMITE DIARIO ALCANZADO</b>\nHoy completé las operaciones permitidas.")
-                BOT_RUNNING = False
+                send("⛔ <b>LÍMITE DIARIO ALCANZADO</b>")
+                BOT_RUNNING = False # <--- Modificamos global
                 time.sleep(10)
                 continue
             if LOSS_STREAK >= MAX_LOSS_STREAK:
                 if time.time() - LAST_LOSS < PAUSE_TIME:
-                    time.sleep(2)
+                    time.sleep(1)
                     continue
                 else:
-                    LOSS_STREAK = 0 # Reinicia tras pausa
+                    LOSS_STREAK = 0
 
             server_time = iq.get_server_timestamp()
             sec = server_time % 60
 
-            # 🕒 FASE DE ANÁLISIS: 45s a 58s de cada minuto
+            # 🕒 ANÁLISIS
             if 45 <= sec <= 58:
                 best_score = 0
                 best_pair = None
                 best_signal = None
-
                 for pair in PAIRS:
                     df1 = get_df(iq, pair, TIMEFRAME_M1)
                     df5 = get_df(iq, pair, TIMEFRAME_M5)
-
                     if df1 is None or df5 is None: continue
                     if not candle_quality(df1): continue
-
                     score = score_market(df1, df5)
-                    if score < 5: continue # Solo mercados decentes
-
-                    # ✅ LLAMA A LA ESTRATEGIA (AQUÍ SE BLOQUEA SI NO HAY CONFIRMACIÓN)
+                    if score < 5: continue
                     s = get_signal(df1, df5)
-
-                    # Solo guarda si es señal válida y mejor puntuación
                     if s and score > best_score:
                         best_score = score
                         best_pair = pair
                         best_signal = s
+                signal = (best_pair, best_signal) if best_pair else None
 
-                # Guarda la mejor señal encontrada
-                if best_pair:
-                    signal = (best_pair, best_signal)
-                else:
-                    signal = None # 🛑 SIN SEÑAL = BLOQUEADO
-
-            # ⚡ FASE DE EJECUCIÓN: Últimos milisegundos del minuto
+            # ⚡ EJECUCIÓN
             if 59.4 <= sec <= 59.98 or 0 <= sec <= 0.25:
                 candle = int(server_time // 60)
-                if candle == last_candle:
-                    continue # Evita doble ejecución
+                if candle == last_candle: continue
                 last_candle = candle
-
-                # 🛑 SI NO HAY SEÑAL -> NO OPERA
-                if not signal:
-                    continue
+                if not signal: continue
 
                 pair, direction = signal
+                # NO INVERTIR SEÑAL
+                if not risk.can_trade(): continue
 
-                # 🚨 ERROR CRÍTICO CORREGIDO: ELIMINADA INVERSIÓN DE DIRECCIÓN
-                # direction = "put" if direction == "call" else "call"
-
-                if not risk.can_trade():
-                    continue
-
-                # ✅ EJECUTAR OPERACIÓN
                 status, trade_id = iq.buy(BASE_AMOUNT, pair, direction, EXPIRATION)
-
                 if status:
                     DAILY_TRADES += 1
                     tipo = "🟢 <b>COMPRA / CALL</b>" if direction == "call" else "🔴 <b>VENTA / PUT</b>"
-                    send(f"🚀 <b>OPERACIÓN EJECUTADA</b>\n💹 Activo: {pair}\n📈 Dirección: {tipo}\n💰 Monto: ${BASE_AMOUNT}\n🔢 N°: {DAILY_TRADES}/{MAX_DAILY_TRADES}")
-
+                    send(f"🚀 {pair} | {tipo} | ${BASE_AMOUNT} | {DAILY_TRADES}/{MAX_DAILY_TRADES}")
                     risk.register_trade()
-
-                    # ⏳ ESPERAR RESULTADO (1min + margen)
                     time.sleep(65)
                     result = iq.check_win_v4(trade_id)
-
                     if result < 0:
                         LOSS_STREAK += 1
                         LAST_LOSS = time.time()
-                        send(f"❌ <b>LOSS</b> | Saldo: ${result:.2f}\n⚠️ Racha: {LOSS_STREAK}/{MAX_LOSS_STREAK}\n⏸️ Pausa {PAUSE_TIME//60}min")
+                        send(f"❌ LOSS | ${result:.2f} | Pausa {PAUSE_TIME//60}min")
                     else:
                         LOSS_STREAK = 0
-                        send(f"✅ <b>WIN</b> | Ganancia: +${result:.2f}\n_________________________")
-
-                # Reiniciar señal para el próximo ciclo
+                        send(f"✅ WIN | +${result:.2f}")
                 signal = None
 
-            time.sleep(0.05) # Pequeña pausa para no saturar API
+            time.sleep(0.1)
 
         except Exception as e:
             send(f"💥 <b>ERROR:</b> {str(e)}")
