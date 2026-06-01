@@ -38,6 +38,9 @@ MAX_LOSS_STREAK = 1             # Para tras 1 pérdida
 PAUSE_TIME = 300                # Pausa 5 min tras pérdida
 MIN_CANDLE_BODY_PERCENT = 0.70  # 70% del rango = Vela FUERTE
 
+# 🚦 CONTROL DE ESTADO DEL BOT (POR TELEGRAM)
+BOT_RUNNING = False              # <-- POR DEFECTO: DETENIDO
+
 
 # ==================================================
 # 🚀 ESTRATEGIA PRO - VERSIÓN: BLOQUEO ESTRICTO
@@ -168,7 +171,7 @@ def confirmaciones(df, direccion):
     if direccion == "put" and df['fractal_up'].iloc[-6:].any(): frac_ok = True
     return boll_ok and zig_ok and frac_ok
 
-# ---------------- 🎯 SEÑAL FINAL (LA PARTE MÁS IMPORTANTE) ----------------
+# ---------------- 🎯 SEÑAL FINAL ----------------
 def get_signal(df1, df5):
     """
     LÓGICA DE OPERACIÓN:
@@ -195,7 +198,7 @@ def get_signal(df1, df5):
     # 🔥🔥🔥 REGLA DECISIVA DEL USUARIO 🔥🔥🔥
     # SI LA VELA ANTERIOR NO CONFIRMA -> NO OPERA (BLOQUEO)
     if not vela_anterior_confirma_tendencia(df1, direccion):
-        return None  # <--- AQUÍ SE BLOQUEA SI NO HAY CONFIRMACIÓN
+        return None
 
     # Paso 4: Confirmación indicadores
     if not confirmaciones(df1, direccion): return None
@@ -219,7 +222,7 @@ def score_market(df1, df5):
 
 
 # ==================================================
-# 🤖 GESTIÓN DEL BOT - CONEXIÓN Y EJECUCIÓN
+# 🤖 GESTIÓN DEL BOT - CONEXIÓN, COMANDOS Y EJECUCIÓN
 # ==================================================
 
 class RiskManager:
@@ -239,12 +242,53 @@ CURRENT_DAY = datetime.utcnow().day
 LOSS_STREAK = 0
 LAST_LOSS = 0
 
+# ---------------- 🆕 FUNCIÓN NUEVA: LEER COMANDOS TELEGRAM ----------------
+def check_telegram_commands():
+    """
+    Escucha comandos /start y /stop desde Telegram
+    """
+    global BOT_RUNNING
+    try:
+        # Obtener actualizaciones (offset para no leer mensajes antiguos repetidos)
+        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+        response = requests.get(url, timeout=5).json()
+        
+        if not response.get("ok"):
+            return
+
+        updates = response.get("result", [])
+        for update in updates:
+            if "message" in update and "text" in update["message"]:
+                text = update["message"]["text"].strip().lower()
+                chat_id = str(update["message"]["chat"]["id"])
+
+                # SOLO RESPONDE A TU CHAT ID POR SEGURIDAD
+                if chat_id != str(CHAT_ID):
+                    continue
+
+                # 🟢 COMANDO START
+                if text == "/start":
+                    BOT_RUNNING = True
+                    send("🟢 <b>BOT INICIADO</b>\nEstoy operando en modo estricto.\n✅ Solo con confirmación de vela anterior.\n✅ Solo a favor de tendencia.")
+                    # Limpiar mensajes procesados
+                    requests.get(f"{url}?offset={update['update_id'] + 1}")
+
+                # 🔴 COMANDO STOP
+                elif text == "/stop":
+                    BOT_RUNNING = False
+                    send("🔴 <b>BOT DETENIDO</b>\nHe parado todas las operaciones.\nEscribe /start para volver a activar.")
+                    # Limpiar mensajes procesados
+                    requests.get(f"{url}?offset={update['update_id'] + 1}")
+    except:
+        pass
+
+
 def send(msg):
     if TOKEN and CHAT_ID:
         try:
             requests.post(
                 f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"},
+                data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML", "disable_web_page_preview": True},
                 timeout=5
             )
         except: pass
@@ -255,7 +299,8 @@ def reset_day():
         DAILY_TRADES = 0
         CURRENT_DAY = datetime.utcnow().day
         LOSS_STREAK = 0
-        send("🔄 NUEVO DÍA: Contadores reiniciados")
+        if BOT_RUNNING:
+            send("🔄 <b>NUEVO DÍA</b>\nContadores reiniciados. Continúo operando...")
 
 def connect():
     while True:
@@ -264,10 +309,10 @@ def connect():
             status, _ = iq.connect()
             if status:
                 iq.change_balance("PRACTICE") # Cambiar a "REAL" si usas dinero real
-                send("✅ *BOT PRO ACTIVADO* | Config: 1min | Solo confirmación vela anterior")
+                send("✅ <b>BOT CONECTADO</b>\nSistema listo. Escribe /start para EMPEZAR.")
                 return iq
         except Exception as e:
-            send(f"❌ Error Conexión: {e}")
+            send(f"❌ Error Conexión: {str(e)}")
         time.sleep(5)
 
 def get_df(iq, pair, tf):
@@ -307,10 +352,19 @@ def main():
 
     while True:
         try:
+            # 🆕 SIEMPRE VERIFICAR COMANDOS ANTES DE NADA
+            check_telegram_commands()
             reset_day()
 
-            # 🔒 LÍMITES DE SEGURIDAD
+            # 🛑 SI EL BOT ESTÁ DETENIDO -> NO HACE NADA, SOLO ESPERA
+            if not BOT_RUNNING:
+                time.sleep(2)
+                continue
+
+            # 🔒 LÍMITES DE SEGURIDAD (SOLO SI ESTÁ ACTIVO)
             if DAILY_TRADES >= MAX_DAILY_TRADES:
+                send("⛔ <b>LÍMITE DIARIO ALCANZADO</b>\nHoy completé las operaciones permitidas.")
+                BOT_RUNNING = False
                 time.sleep(10)
                 continue
             if LOSS_STREAK >= MAX_LOSS_STREAK:
@@ -351,7 +405,6 @@ def main():
                 # Guarda la mejor señal encontrada
                 if best_pair:
                     signal = (best_pair, best_signal)
-                    send(f"🔍 ANÁLISIS: {best_pair} -> *{best_signal.upper()}* (Esperando ejecución...)")
                 else:
                     signal = None # 🛑 SIN SEÑAL = BLOQUEADO
 
@@ -362,17 +415,16 @@ def main():
                     continue # Evita doble ejecución
                 last_candle = candle
 
-                # 🛑 SI NO HAY SEÑAL O ESTÁ BLOQUEADO -> NO OPERA
+                # 🛑 SI NO HAY SEÑAL -> NO OPERA
                 if not signal:
                     continue
 
                 pair, direction = signal
 
-                # 🚨 ERROR CRÍTICO CORREGIDO: ELIMINAMOS LA INVERSIÓN DE DIRECCIÓN
-                # direction = "put" if direction == "call" else "call"  <--- ELIMINADO!
+                # 🚨 ERROR CRÍTICO CORREGIDO: ELIMINADA INVERSIÓN DE DIRECCIÓN
+                # direction = "put" if direction == "call" else "call"
 
                 if not risk.can_trade():
-                    send("⛔ LÍMITE DIARIO ALCANZADO")
                     continue
 
                 # ✅ EJECUTAR OPERACIÓN
@@ -380,8 +432,8 @@ def main():
 
                 if status:
                     DAILY_TRADES += 1
-                    tipo = "🟢 COMPRA / CALL" if direction == "call" else "🔴 VENTA / PUT"
-                    send(f"🚀 *OPERACIÓN EJECUTADA*\nActivo: `{pair}`\nDirección: {tipo}\nCant: ${BASE_AMOUNT}\nN°: {DAILY_TRADES}/{MAX_DAILY_TRADES}")
+                    tipo = "🟢 <b>COMPRA / CALL</b>" if direction == "call" else "🔴 <b>VENTA / PUT</b>"
+                    send(f"🚀 <b>OPERACIÓN EJECUTADA</b>\n💹 Activo: {pair}\n📈 Dirección: {tipo}\n💰 Monto: ${BASE_AMOUNT}\n🔢 N°: {DAILY_TRADES}/{MAX_DAILY_TRADES}")
 
                     risk.register_trade()
 
@@ -392,10 +444,10 @@ def main():
                     if result < 0:
                         LOSS_STREAK += 1
                         LAST_LOSS = time.time()
-                        send(f"❌ *LOSS* | Saldo: ${result:.2f} | Racha: {LOSS_STREAK}/{MAX_LOSS_STREAK}\n⏸️ Pausa {PAUSE_TIME//60}min")
+                        send(f"❌ <b>LOSS</b> | Saldo: ${result:.2f}\n⚠️ Racha: {LOSS_STREAK}/{MAX_LOSS_STREAK}\n⏸️ Pausa {PAUSE_TIME//60}min")
                     else:
                         LOSS_STREAK = 0
-                        send(f"✅ *WIN* | Ganancia: ${result:.2f}\n_________________________")
+                        send(f"✅ <b>WIN</b> | Ganancia: +${result:.2f}\n_________________________")
 
                 # Reiniciar señal para el próximo ciclo
                 signal = None
@@ -403,7 +455,7 @@ def main():
             time.sleep(0.05) # Pequeña pausa para no saturar API
 
         except Exception as e:
-            send(f"💥 ERROR GENERAL: {str(e)}")
+            send(f"💥 <b>ERROR:</b> {str(e)}")
             time.sleep(3)
 
 if __name__ == "__main__":
