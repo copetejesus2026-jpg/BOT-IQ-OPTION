@@ -71,7 +71,7 @@ def score_market(df1, df5):
 
 
 DAILY_TRADES = 0
-MAX_DAILY_TRADES = 100
+MAX_DAILY_TRADES = 30
 CURRENT_DAY = datetime.utcnow().day
 
 LOSS_STREAK = 0
@@ -189,7 +189,7 @@ def main():
 
                     score = score_market(df1, df5)
 
-                    if score < 3:
+                    if score < 4:
                         continue
 
                     s = get_signal(df1, df5)
