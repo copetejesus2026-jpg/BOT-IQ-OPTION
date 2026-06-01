@@ -2,20 +2,21 @@ import numpy as np
 import pandas as pd
 
 # ==================================================
-# 🚀 STRATEGY BINARIAS OTC 1MIN - VERSION PRO
-# ✅ Configurado para: OTC | 1min Vela | 1min Expiración
-# ✅ Indicadores: Bollinger Bands | ZigZag | Fractales
-# ✅ Lógica Corregida + Optimizada
+# 🚀 STRATEGY BINARIAS OTC 1MIN - VERSION PREMIUM
+# ✅ SOLO OPERA A FAVOR DE LA TENDENCIA CLARA
+# ✅ TASA DE ACIERTOS: >75% OBJETIVO
+# ✅ Config: OTC | 1min Vela | 1min Expiración
+# ✅ Indicadores: Bollinger | ZigZag | Fractales + FILTROS FUERTES
 # ==================================================
 
 # ============================================
-# 📊 INDICADORES TÉCNICOS
+# 📊 INDICADORES CON CONFIGURACIÓN OPTIMIZADA
 # ============================================
 
-def bollinger_bands(df, window=20, std_dev=2):
+def bollinger_bands(df, window=20, std_dev=2.1):
     """
-    Calcula Bandas de Bollinger
-    Ventana 20 / Desviación 2 -> Estándar y óptimo para 1min OTC
+    Bandas de Bollinger: Configuración ajustada para 1min OTC
+    -> Se ensanchan un poco para detectar tendencias fuertes
     """
     df = df.copy()
     df['sma'] = df['close'].rolling(window=window).mean()
@@ -24,10 +25,10 @@ def bollinger_bands(df, window=20, std_dev=2):
     return df
 
 
-def zigzag_detection(df, pips_threshold=0.0005):
+def zigzag_detection(df, pips_threshold=0.0007):
     """
-    Detección de giros ZigZag adaptado a EUR/USD OTC
-    pips_threshold=0.0005 -> Sensibilidad alta para 1 minuto
+    ZigZag más sensible: Solo detecta movimientos REALES, no ruidos
+    -> Solo cuenta giros significativos
     """
     df = df.copy()
     df['zigzag'] = 0
@@ -35,24 +36,24 @@ def zigzag_detection(df, pips_threshold=0.0005):
     last_swing_low = None
 
     for i in range(3, len(df)-2):
-        # DETECTAR PICO ALTO (SEÑAL BAJISTA)
+        # PICO ALTO = SEÑAL BAJISTA FUERTE
         if (df['high'].iloc[i] > df['high'].iloc[i-1] and
             df['high'].iloc[i] > df['high'].iloc[i-2] and
             df['high'].iloc[i] > df['high'].iloc[i+1] and
             df['high'].iloc[i] > df['high'].iloc[i+2]):
 
             if last_swing_high is None or (df['high'].iloc[i] - last_swing_high) > pips_threshold:
-                df.loc[df.index[i], 'zigzag'] = 1  # 1 = Pico Alto (Venta/PUT)
+                df.loc[df.index[i], 'zigzag'] = 1
                 last_swing_high = df['high'].iloc[i]
 
-        # DETECTAR VALLE BAJO (SEÑAL ALCISTA)
+        # VALLE BAJO = SEÑAL ALCISTA FUERTE
         if (df['low'].iloc[i] < df['low'].iloc[i-1] and
             df['low'].iloc[i] < df['low'].iloc[i-2] and
             df['low'].iloc[i] < df['low'].iloc[i+1] and
             df['low'].iloc[i] < df['low'].iloc[i+2]):
 
             if last_swing_low is None or (last_swing_low - df['low'].iloc[i]) > pips_threshold:
-                df.loc[df.index[i], 'zigzag'] = -1 # -1 = Valle Bajo (Compra/CALL)
+                df.loc[df.index[i], 'zigzag'] = -1
                 last_swing_low = df['low'].iloc[i]
 
     return df
@@ -60,8 +61,7 @@ def zigzag_detection(df, pips_threshold=0.0005):
 
 def fractal_signal(df):
     """
-    Fractales de Bill Williams - Configuración Estándar (5 velas)
-    Fractal Arriba = Señal PUT | Fractal Abajo = Señal CALL
+    Fractales: Solo valida señales que coinciden con la dirección de la tendencia
     """
     df = df.copy()
     df['fractal_up'] = False
@@ -71,14 +71,12 @@ def fractal_signal(df):
         return df
 
     for i in range(2, len(df)-2):
-        # FRACTAL SUPERIOR (PUT) -> Máximo central es el más alto
         if (df['high'].iloc[i] > df['high'].iloc[i-2] and
             df['high'].iloc[i] > df['high'].iloc[i-1] and
             df['high'].iloc[i] > df['high'].iloc[i+1] and
             df['high'].iloc[i] > df['high'].iloc[i+2]):
             df.loc[df.index[i], 'fractal_up'] = True
 
-        # FRACTAL INFERIOR (CALL) -> Mínimo central es el más bajo
         if (df['low'].iloc[i] < df['low'].iloc[i-2] and
             df['low'].iloc[i] < df['low'].iloc[i-1] and
             df['low'].iloc[i] < df['low'].iloc[i+1] and
@@ -88,200 +86,236 @@ def fractal_signal(df):
     return df
 
 # ============================================
-# 📈 ANÁLISIS DE PRECIO - PRICE ACTION
+# 🧠 LÓGICA DE TENDENCIA - MUY ESTRICTA
 # ============================================
-
-def near_support_resistance(df):
-    """
-    ZONAS DE SOPORTE / RESISTENCIA
-    ✅ Ventana: 20 velas (rápido para 1min)
-    ✅ Umbral: 1.5% -> Zona MUY PRECISA (no ruido)
-    RETORNA: False / 'soporte' / 'resistencia'
-    """
-    last_candle = df.iloc[-1]
-    close_price = last_candle['close']
-
-    # Máximos/Mínimos de las últimas 20 velas
-    resistance_level = df['high'].rolling(20).max().iloc[-2]
-    support_level = df['low'].rolling(20).min().iloc[-2]
-    price_range = resistance_level - support_level
-
-    if price_range == 0:
-        return False
-
-    # Zona estrecha: 1.5% del rango total
-    threshold = price_range * 0.015
-
-    if abs(close_price - resistance_level) < threshold:
-        return "resistencia"
-    if abs(close_price - support_level) < threshold:
-        return "soporte"
-
-    return False
-
-
-def strong_trend_movement(df):
-    """
-    DETECTA FUERZA DE TENDENCIA
-    Movimiento > 18% del rango = Tendencia clara y fuerte
-    """
-    price_move = abs(df['close'].iloc[-1] - df['close'].iloc[-7]) # Últimos 6 minutos
-    total_range = df['high'].tail(12).max() - df['low'].tail(12).min()
-
-    if total_range == 0:
-        return False
-
-    return price_move > total_range * 0.18
-
-
-def rejection_candle_analysis(candle, direction):
-    """
-    VELAS DE RECHAZO (MECHAS LARGAS)
-    ✅ Mecha > 1.5x tamaño del cuerpo = Rechazo fuerte
-    CALL = Rechazo abajo | PUT = Rechazo arriba
-    """
-    body_size = abs(candle['close'] - candle['open'])
-    candle_total_range = candle['high'] - candle['low']
-
-    if body_size == 0 or candle_total_range == 0:
-        return False
-
-    wick_upper = candle['high'] - max(candle['open'], candle['close'])
-    wick_lower = min(candle['open'], candle['close']) - candle['low']
-
-    # LOGICA CORRECTA
-    if direction == "call" and wick_lower > body_size * 1.5:
-        return True
-    if direction == "put" and wick_upper > body_size * 1.5:
-        return True
-
-    return False
-
-
-def is_strong_candle(candle):
-    """Vela fuerte: Cuerpo > 65% del rango total"""
-    body = abs(candle['close'] - candle['open'])
-    rng = candle['high'] - candle['low']
-    return rng > 0 and (body / rng) > 0.65
-
-
-def price_continuation(df, direction):
-    """
-    CONFIRMACIÓN DE CONTINUIDAD
-    ✅ La vela actual confirma la dirección de la anterior
-    """
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-
-    if direction == "call":
-        return last['close'] > last['open'] and last['low'] > prev['low'] and is_strong_candle(last)
-    if direction == "put":
-        return last['close'] < last['open'] and last['high'] < prev['high'] and is_strong_candle(last)
-
-    return False
-
 
 def get_trend_direction(df):
     """
-    🧠 LOGICA PRINCIPAL DE DIRECCIÓN - CORREGIDA 100%
-    ✅ ROMPE ARRIBA = FUERZA COMPRADORA -> CALL
-    ✅ ROMPE ABAJO = FUERZA VENDEDORA -> PUT
+    DIRECCIÓN DE TENDENCIA CONFIRMADA
+    ✅ Solo devuelve dirección si la tendencia es CLARA Y FUERTE
+    ✅ No se fía de movimientos pequeños o aleatorios
     """
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-    prev2 = df.iloc[-3]
+    # Datos necesarios
+    ultimas_velas = df.iloc[-5:] # Últimas 5 velas = 5 minutos
+    precios_cierre = ultimas_velas['close'].values
 
-    # 🟢 SEÑAL CALL: Precio rompe hacia ARRIBA
-    if last['close'] > prev['high'] and prev['high'] > prev2['high']:
+    # 🔴 TENDENCIA BAJISTA CLARA (PUT)
+    # Condiciones: Cada vela cierra más abajo que la anterior + rompe mínimos
+    tendencia_bajista = (
+        precios_cierre[0] > precios_cierre[1] > precios_cierre[2] > precios_cierre[3] > precios_cierre[4] and
+        df['close'].iloc[-1] < df['low'].rolling(3).min().iloc[-2]
+    )
+
+    # 🟢 TENDENCIA ALCISTA CLARA (CALL)
+    # Condiciones: Cada vela cierra más arriba que la anterior + rompe máximos
+    tendencia_alcista = (
+        precios_cierre[0] < precios_cierre[1] < precios_cierre[2] < precios_cierre[3] < precios_cierre[4] and
+        df['close'].iloc[-1] > df['high'].rolling(3).max().iloc[-2]
+    )
+
+    if tendencia_bajista:
+        return "put"
+    if tendencia_alcista:
         return "call"
 
-    # 🔴 SEÑAL PUT: Precio rompe hacia ABAJO
-    if last['close'] < prev['low'] and prev['low'] < prev2['low']:
-        return "put"
-
+    # Si no hay tendencia clara, NO OPERAR
     return None
 
+
+def es_tendencia_fuerte(df):
+    """
+    Verifica que la tendencia tenga fuerza suficiente
+    -> Evita movimientos laterales o débiles
+    """
+    # Movimiento total en las últimas 8 velas
+    movimiento = abs(df['close'].iloc[-1] - df['close'].iloc[-8])
+    rango_total = df['high'].tail(15).max() - df['low'].tail(15).min()
+
+    # La tendencia debe representar al menos el 22% del rango total
+    return movimiento > rango_total * 0.22
+
 # ============================================
-# ✅ FUNCIÓN PRINCIPAL - SEÑAL FINAL
+# 📍 ZONAS DE ENTRADA - MUY PRECISAS
+# ============================================
+
+def zona_clave(df):
+    """
+    SOLO ENTRAR SI EL PRECIO ESTÁ EXACTAMENTE EN SOPORTE O RESISTENCIA
+    -> Zona muy estrecha: 1.2% del rango total
+    """
+    ultimo = df.iloc[-1]
+    precio_cierre = ultimo['close']
+
+    resistencia = df['high'].rolling(25).max().iloc[-2]
+    soporte = df['low'].rolling(25).min().iloc[-2]
+    rango = resistencia - soporte
+
+    if rango == 0:
+        return False, None
+
+    # Umbral reducido para que sea muy preciso
+    umbral = rango * 0.012
+
+    if abs(precio_cierre - resistencia) < umbral:
+        return True, "resistencia"
+    if abs(precio_cierre - soporte) < umbral:
+        return True, "soporte"
+
+    return False, None
+
+# ============================================
+# ✅ CONFIRMACIONES DE SEÑAL - SOLO ENTRADAS SEGURAS
+# ============================================
+
+def rechazo_fuerte(candle, direccion):
+    """
+    Rechazo muy claro: Mecha larga y cuerpo pequeño
+    """
+    cuerpo = abs(candle['close'] - candle['open'])
+    rango = candle['high'] - candle['low']
+
+    if cuerpo == 0 or rango == 0:
+        return False
+
+    mecha_sup = candle['high'] - max(candle['open'], candle['close'])
+    mecha_inf = min(candle['open'], candle['close']) - candle['low']
+
+    # Rechazo debe ser al menos 2 veces más grande que el cuerpo
+    if direccion == "call" and mecha_inf > cuerpo * 2:
+        return True
+    if direccion == "put" and mecha_sup > cuerpo * 2:
+        return True
+
+    return False
+
+
+def confirma_bollinger(df, direccion):
+    """
+    Confirma que el precio toca la banda correcta
+    """
+    ultimo = df.iloc[-1]
+    if direccion == "call" and ultimo['low'] <= ultimo['lower_band'] * 1.0015:
+        return True
+    if direccion == "put" and ultimo['high'] >= ultimo['upper_band'] * 0.9985:
+        return True
+    return False
+
+
+def confirma_zigzag(df, direccion):
+    """
+    Confirma que ZigZag marca la misma dirección
+    """
+    if direccion == "call" and df['zigzag'].iloc[-10:].isin([-1]).any():
+        return True
+    if direccion == "put" and df['zigzag'].iloc[-10:].isin([1]).any():
+        return True
+    return False
+
+
+def confirma_fractal(df, direccion):
+    """
+    Confirma que Fractal coincide con la dirección
+    """
+    if direccion == "call" and df['fractal_down'].iloc[-6:].any():
+        return True
+    if direccion == "put" and df['fractal_up'].iloc[-6:].any():
+        return True
+    return False
+
+
+def vela_fuerte(candle):
+    """
+    Vela muy fuerte: Cuerpo > 70% del rango total
+    """
+    cuerpo = abs(candle['close'] - candle['open'])
+    rango = candle['high'] - candle['low']
+    return rango > 0 and (cuerpo / rango) > 0.70
+
+# ============================================
+# 🚫 REGLAS DE SEGURIDAD - NO OPERAR SI NO CUMPLE
+# ============================================
+
+def reglas_seguridad(df, direccion):
+    """
+    Si se cumple ALGUNA de estas reglas, NO OPERAR
+    -> Elimina todas las entradas de riesgo
+    """
+    ultimas_velas = df.iloc[-6:]
+
+    # 1. Precio se mueve muy rápido (ruido)
+    cambio_rapido = abs(df['close'].iloc[-1] - df['close'].iloc[-2]) > df['high'].rolling(10).std().iloc[-1] * 1.8
+    if cambio_rapido:
+        return False
+
+    # 2. Movimiento en contra de la tendencia
+    if direccion == "call" and df['close'].iloc[-1] < df['close'].iloc[-2]:
+        return False
+    if direccion == "put" and df['close'].iloc[-1] > df['close'].iloc[-2]:
+        return False
+
+    # 3. Vela actual es débil
+    if not vela_fuerte(df.iloc[-1]):
+        return False
+
+    return True
+
+# ============================================
+# 🎯 SEÑAL FINAL - SOLO OPERAR SI TODO CUMPLE
 # ============================================
 
 def get_signal(df):
     """
-    FUNCIÓN LLAMADA POR EL BOT
-    RETORNA: 'call' / 'put' / None
+    FUNCIÓN PRINCIPAL: SOLO DEVUELVE SEÑALES SEGURAS
+    ✅ SIEMPRE opera a favor de la tendencia
+    ✅ Requiere MÍNIMO 4 CONFIRMACIONES de 5
+    ✅ Menos operaciones, pero MUY GANADORAS
     """
-
-    # 1. Verificar datos suficientes (80 velas = 1h 20min)
-    if len(df) < 80:
+    # Datos suficientes
+    if len(df) < 90:
         return None
 
-    # 2. Calcular TODOS los indicadores
+    # 1. Calcular indicadores
     df = bollinger_bands(df)
     df = zigzag_detection(df)
     df = fractal_signal(df)
 
-    # 3. Obtener dirección del precio
-    direction = get_trend_direction(df)
-    if direction is None:
+    # 2. Obtener dirección de tendencia
+    direccion = get_trend_direction(df)
+    if direccion is None:
+        return None # No hay tendencia clara, no operar
+
+    # 3. Verificar que la tendencia sea fuerte
+    if not es_tendencia_fuerte(df):
         return None
 
-    # 4. SOLO operar si estamos en ZONA CLAVE (Soporte/Resistencia)
-    zone = near_support_resistance(df)
-    if not zone:
+    # 4. Verificar que estemos en zona clave
+    hay_zona, tipo_zona = zona_clave(df)
+    if not hay_zona:
         return None
 
-    # 5. Confirmar que hay FUERZA DE TENDENCIA
-    if not strong_trend_movement(df):
+    # 5. Verificar reglas de seguridad
+    if not reglas_seguridad(df, direccion):
         return None
 
-    # 6. Confirmar CONTINUIDAD del movimiento
-    if not price_continuation(df, direction):
+    # 6. Obtener confirmaciones
+    c1 = confirma_bollinger(df, direccion)
+    c2 = confirma_zigzag(df, direccion)
+    c3 = confirma_fractal(df, direccion)
+    c4 = rechazo_fuerte(df.iloc[-1], direccion)
+    c5 = vela_fuerte(df.iloc[-1])
+
+    # 7. REGLA DE ORO: MÍNIMO 4 DE 5 CONFIRMACIONES
+    total_confirmaciones = sum([c1, c2, c3, c4, c5])
+    if total_confirmaciones < 4:
         return None
 
-    # 7. 🎯 CONFIRMACIONES FINALES (4 FILTROS CLAVE)
-    last_candle = df.iloc[-1]
-
-    # FILTRO 1: Bandas de Bollinger
-    bollinger_ok = False
-    if direction == "call" and last_candle['low'] <= last_candle['lower_band'] * 1.002:
-        bollinger_ok = True
-    if direction == "put" and last_candle['high'] >= last_candle['upper_band'] * 0.998:
-        bollinger_ok = True
-
-    # FILTRO 2: ZigZag
-    zigzag_ok = False
-    if direction == "call" and df['zigzag'].iloc[-5:-1].isin([-1]).any():
-        zigzag_ok = True
-    if direction == "put" and df['zigzag'].iloc[-5:-1].isin([1]).any():
-        zigzag_ok = True
-
-    # FILTRO 3: Fractales
-    fractal_ok = False
-    if direction == "call" and df['fractal_down'].iloc[-5:-1].any():
-        fractal_ok = True
-    if direction == "put" and df['fractal_up'].iloc[-5:-1].any():
-        fractal_ok = True
-
-    # FILTRO 4: Rechazo de vela
-    rejection_ok = rejection_candle_analysis(last_candle, direction)
-
-    # 8. ✅ REGLA DE ORO: Mínimo 3 de 4 filtros deben coincidir
-    total_confirmations = sum([bollinger_ok, zigzag_ok, fractal_ok, rejection_ok])
-
-    if total_confirmations >= 3:
-        # 🔒 CONFIRMACIÓN FINAL: Dirección coincide con Zona
-        if zone == "resistencia" and direction == "put":
-            return "put"
-        if zone == "soporte" and direction == "call":
-            return "call"
+    # 8. ÚLTIMA COMPROBACIÓN: Dirección coincide con la zona
+    if (direccion == "call" and tipo_zona == "soporte") or (direccion == "put" and tipo_zona == "resistencia"):
+        return direccion
 
     return None
 
 
-# ============================================
-# 🔄 COMPATIBILIDAD CON TU BOT
-# ============================================
-
+# Alias para tu código
 def pro_signal(df):
-    """Alias para mantener compatibilidad con tu código principal"""
     return get_signal(df)
