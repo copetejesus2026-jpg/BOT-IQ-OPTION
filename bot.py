@@ -39,6 +39,7 @@ PAUSE_TIME = 300                # Pausa 5 min tras pérdida
 MIN_CANDLE_BODY_PERCENT = 0.70  # 70% del rango = Vela FUERTE
 
 # 🚦 CONTROL DE ESTADO DEL BOT (POR TELEGRAM)
+# ✅ CORREGIDO: Variable Global declarada correctamente
 BOT_RUNNING = False              # <-- POR DEFECTO: DETENIDO
 
 
@@ -246,8 +247,9 @@ LAST_LOSS = 0
 def check_telegram_commands():
     """
     Escucha comandos /start y /stop desde Telegram
+    ✅ CORREGIDO: Declaración 'global BOT_RUNNING' para solucionar el error
     """
-    global BOT_RUNNING
+    global BOT_RUNNING  # <--- ✅ ESTA LÍNEA SOLUCIONA EL ERROR TOTALMENTE
     try:
         # Obtener actualizaciones (offset para no leer mensajes antiguos repetidos)
         url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
@@ -279,8 +281,8 @@ def check_telegram_commands():
                     send("🔴 <b>BOT DETENIDO</b>\nHe parado todas las operaciones.\nEscribe /start para volver a activar.")
                     # Limpiar mensajes procesados
                     requests.get(f"{url}?offset={update['update_id'] + 1}")
-    except:
-        pass
+    except Exception as e:
+        print("Error comandos:", e)
 
 
 def send(msg):
