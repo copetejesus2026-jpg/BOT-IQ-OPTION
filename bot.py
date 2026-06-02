@@ -233,12 +233,9 @@ class RiskManager:
     def register_trade(self):
         self.daily += 1
 
-# ---------------- 🆕 COMANDOS TELEGRAM (CORREGIDOS) ----------------
+# ---------------- 🆕 COMANDOS TELEGRAM ----------------
 def check_telegram_commands():
-    """
-    ✅ AQUÍ ESTÁ LA SOLUCIÓN: Declaramos GLOBAL al PRINCIPIO
-    """
-    global BOT_RUNNING, LAST_UPDATE_ID  # ← ¡¡¡ESTA LÍNEA ES LA CLAVE!!!
+    global BOT_RUNNING, LAST_UPDATE_ID
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={LAST_UPDATE_ID + 1}&timeout=2"
         res = requests.get(url, timeout=5).json()
@@ -260,11 +257,11 @@ def check_telegram_commands():
 
             if text == "/start":
                 BOT_RUNNING = True
-                send("🟢 <b>BOT INICIADO ✅</b>\n🔐 Modo: ESTRICTO\n📊 Condición: Solo con confirmación de vela anterior")
+                send("🟢 <b>BOT INICIADO ✅</b>\n✅ Solo opera si la vela anterior confirma\n✅ Solo a favor de la tendencia")
             
             elif text == "/stop":
                 BOT_RUNNING = False
-                send("🔴 <b>BOT DETENIDO ⏹️</b>\nUsa /start para reactivar.")
+                send("🔴 <b>BOT DETENIDO ⏹️</b>\nUsa /start para volver a activar")
 
     except Exception as e:
         print(f"Error comandos: {e}")
@@ -281,10 +278,7 @@ def send(msg):
         except: pass
 
 def reset_day():
-    """
-    ✅ También declaramos GLOBAL aquí
-    """
-    global DAILY_TRADES, CURRENT_DAY, LOSS_STREAK, BOT_RUNNING  # ← GLOBAL
+    global DAILY_TRADES, CURRENT_DAY, LOSS_STREAK, BOT_RUNNING
     if datetime.utcnow().day != CURRENT_DAY:
         DAILY_TRADES = 0
         CURRENT_DAY = datetime.utcnow().day
@@ -299,10 +293,10 @@ def connect():
             status, _ = iq.connect()
             if status:
                 iq.change_balance("PRACTICE")
-                send("✅ <b>CONECTADO</b>\nEscribe /start para empezar.")
+                send("✅ <b>CONECTADO A IQ OPTION</b>\nSistema listo. Escribe /start para empezar.")
                 return iq
         except Exception as e:
-            send(f"❌ Error: {str(e)}")
+            send(f"❌ Error conexión: {str(e)}")
         time.sleep(5)
 
 def get_df(iq, pair, tf):
@@ -324,4 +318,63 @@ def candle_quality(df):
     wick_up = last['high'] - max(last['open'], last['close'])
     wick_down = min(last['open'], last['close']) - last['low']
     
-    if wick_up > body * 
+    # ✅ LÍNEA CORREGIDA: TENÍA INCOMPLETA, AHORA QUEDA COMPLETA
+    if wick_up > body * 1.2: 
+        return False
+    if wick_down > body * 1.2: 
+        return False
+    if body < ((last['high'] - last['low']) * 0.3): 
+        return False
+    return True
+
+
+def main():
+    global LOSS_STREAK, LAST_LOSS, DAILY_TRADES, BOT_RUNNING
+    iq = connect()
+    risk = RiskManager()
+    last_candle = None
+    signal = None
+
+    while True:
+        try:
+            check_telegram_commands()
+            reset_day()
+
+            if not BOT_RUNNING:
+                time.sleep(1)
+                continue
+
+            if DAILY_TRADES >= MAX_DAILY_TRADES:
+                send("⛔ <b>LÍMITE DIARIO ALCANZADO 🛑</b>")
+                BOT_RUNNING = False
+                time.sleep(10)
+                continue
+                
+            if LOSS_STREAK >= MAX_LOSS_STREAK:
+                if time.time() - LAST_LOSS < PAUSE_TIME:
+                    time.sleep(1)
+                    continue
+                else:
+                    LOSS_STREAK = 0
+
+            server_time = iq.get_server_timestamp()
+            sec = server_time % 60
+
+            if 45 <= sec <= 58:
+                best_score = 0
+                best_pair = None
+                best_signal = None
+
+                for pair in PAIRS:
+                    df1 = get_df(iq, pair, TIMEFRAME_M1)
+                    df5 = get_df(iq, pair, TIMEFRAME_M5)
+
+                    if df1 is None or df5 is None: continue
+                    if not candle_quality(df1): continue
+
+                    score = score_market(df1, df5)
+                    if score < 5: continue
+
+                    s = get_signal(df1, df5)
+
+                    if s and score > best_score:
