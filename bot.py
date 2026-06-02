@@ -4,8 +4,10 @@ import requests
 import pandas as pd
 import sys
 import logging
-import numpy as np
 from datetime import datetime
+
+# IMPORTAMOS LA NUEVA ESTRATEGIA DE ESTRUCTURA
+from strategy import analizar_estructura, detectar_patron, verificar_rechazo
 
 from iqoptionapi.stable_api import IQ_Option
 
@@ -13,368 +15,262 @@ logging.getLogger().setLevel(logging.CRITICAL)
 sys.stderr = open(os.devnull, 'w')
 
 # ==========================================
-# 🔑 CONFIGURACIÓN DE CUENTA Y TELEGRAM
+# 🔑 CONFIGURACIÓN - EXCLUSIVO EURUSD REAL
 # ==========================================
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# ⚙️ PARÁMETROS DE OPERACIÓN
-EXPIRATION = 1                  # 1 Minuto
-BASE_AMOUNT = 3.33              # Monto por operación
-TIMEFRAME_M1 = 60               # 1 Minuto
-TIMEFRAME_M5 = 300              # 5 Minutos
+# ⚙️ PARÁMETROS SEGÚN TU SOLICITUD
+ASSET = "EURUSD"               # 🎯 SOLO ESTE ACTIVO - MERCADO REAL
+EXPIRATION = 1                  # ⏱️ EXPIRACIÓN 1 MINUTO
+BASE_AMOUNT = 2.0               # 💰 MONTO POR OPERACIÓN
+TIMEFRAME = 60                  # 🕯️ VELAS DE 1 MINUTO
+WINDOW_ANALISIS = 60            # 🔍 ANALIZAR SOLO ÚLTIMAS 60 VELAS
 
-# 📋 ACTIVOS OTC
-PAIRS = [
-    "EURUSD-OTC", "GBPUSD-OTC", "USDCHF-OTC", 
-    "EURGBP-OTC", "EURJPY-OTC", "AUDUSD-OTC"
-]
+# 🛑 GESTIÓN DE RIESGO
+MAX_DAILY_TRADES = 15
+MAX_LOSS_STREAK = 2
+PAUSE_TIME_AFTER_LOSS = 300     # 5 minutos de pausa si pierdes
 
-# 🛑 CONTROL DE RIESGO
-MAX_DAILY_TRADES = 15           # Máx operaciones/día
-MAX_LOSS_STREAK = 1             # Detener tras 1 pérdida
-PAUSE_TIME = 300                # Pausa 5min tras pérdida
-MIN_CANDLE_BODY_PERCENT = 0.70  # 70% cuerpo = Vela fuerte
-
-# ==========================================
-# 🚦 VARIABLE GLOBAL (SOLUCIÓN PRINCIPAL)
-# ==========================================
-BOT_RUNNING = False             # ESTADO INICIAL: DETENIDO
-LAST_UPDATE_ID = 0              # Control de mensajes Telegram
+# 🚦 VARIABLES GLOBALES
+BOT_ACTIVO = True
 DAILY_TRADES = 0
 CURRENT_DAY = datetime.utcnow().day
 LOSS_STREAK = 0
-LAST_LOSS = 0
+LAST_LOSS_TIME = 0
 
-
-# ==================================================
-# 🚀 ESTRATEGIA PRO - CONFIRMACIÓN VELA ANTERIOR
-# ==================================================
-
-# ---------------- INDICADORES ----------------
-def bollinger_bands(df, window=20, std_dev=2.1):
-    df = df.copy()
-    df['sma'] = df['close'].rolling(window=window).mean()
-    df['upper_band'] = df['sma'] + (df['close'].rolling(window=window).std() * std_dev)
-    df['lower_band'] = df['sma'] - (df['close'].rolling(window=window).std() * std_dev)
-    return df
-
-def zigzag_detection(df, pips_threshold=0.0008):
-    df = df.copy()
-    df['zigzag'] = 0
-    last_swing_high = None
-    last_swing_low = None
-    for i in range(3, len(df)-2):
-        if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
-            df['high'].iloc[i] > df['high'].iloc[i-2] and
-            df['high'].iloc[i] > df['high'].iloc[i+1] and 
-            df['high'].iloc[i] > df['high'].iloc[i+2]):
-            if last_swing_high is None or (df['high'].iloc[i] - last_swing_high) > pips_threshold:
-                df.loc[df.index[i], 'zigzag'] = 1
-                last_swing_high = df['high'].iloc[i]
-                
-        if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
-            df['low'].iloc[i] < df['low'].iloc[i-2] and
-            df['low'].iloc[i] < df['low'].iloc[i+1] and 
-            df['low'].iloc[i] < df['low'].iloc[i+2]):
-            if last_swing_low is None or (last_swing_low - df['low'].iloc[i]) > pips_threshold:
-                df.loc[df.index[i], 'zigzag'] = -1
-                last_swing_low = df['low'].iloc[i]
-    return df
-
-def fractal_signal(df):
-    df = df.copy()
-    df['fractal_up'], df['fractal_down'] = False, False
-    if len(df) < 5: 
-        return df
-    for i in range(2, len(df)-2):
-        if (df['high'].iloc[i] > df['high'].iloc[i-2] and 
-            df['high'].iloc[i] > df['high'].iloc[i-1] and
-            df['high'].iloc[i] > df['high'].iloc[i+1] and 
-            df['high'].iloc[i] > df['high'].iloc[i+2]):
-            df.loc[df.index[i], 'fractal_up'] = True
-            
-        if (df['low'].iloc[i] < df['low'].iloc[i-2] and 
-            df['low'].iloc[i] < df['low'].iloc[i-1] and
-            df['low'].iloc[i] < df['low'].iloc[i+1] and 
-            df['low'].iloc[i] < df['low'].iloc[i+2]):
-            df.loc[df.index[i], 'fractal_down'] = True
-    return df
-
-# ---------------- ✅ REGLA PRINCIPAL: VELA ANTERIOR ----------------
-def vela_anterior_confirma_tendencia(df, direccion):
-    if len(df) < 2: 
-        return False
-    
-    vela_anterior = df.iloc[-2]
-    vela_actual = df.iloc[-1]
-
-    cuerpo_ant = abs(vela_anterior['close'] - vela_anterior['open'])
-    rango_ant = vela_anterior['high'] - vela_anterior['low']
-
-    if rango_ant == 0: 
-        return False
-
-    es_fuerte = (cuerpo_ant / rango_ant) >= MIN_CANDLE_BODY_PERCENT
-
-    if direccion == "call":
-        direccion_ok = (vela_anterior['close'] > vela_anterior['open']) and \
-                       (vela_anterior['close'] > vela_anterior['high'].shift(1).iloc[-2])
-        continuacion = vela_actual['low'] > vela_anterior['open']
-
-    else:
-        direccion_ok = (vela_anterior['close'] < vela_anterior['open']) and \
-                       (vela_anterior['close'] < vela_anterior['low'].shift(1).iloc[-2])
-        continuacion = vela_actual['high'] < vela_anterior['open']
-
-    return es_fuerte and direccion_ok and continuacion
-
-# ---------------- ANÁLISIS DE TENDENCIA ----------------
-def get_trend_direction(df):
-    cierre = df['close'].values
-    minimos = df['low'].values
-    maximos = df['high'].values
-
-    alcista = (
-        cierre[-1] > cierre[-2] > cierre[-3] > cierre[-4] and
-        cierre[-1] > maximos[-3] and
-        all(cierre[i] > cierre[i-1] for i in range(-1, -5, -1))
-    )
-    bajista = (
-        cierre[-1] < cierre[-2] < cierre[-3] < cierre[-4] and
-        cierre[-1] < minimos[-3] and
-        all(cierre[i] < cierre[i-1] for i in range(-1, -5, -1))
-    )
-
-    if alcista: return "call"
-    if bajista: return "put"
-    return None
-
-def zona_clave(df):
-    ultimo = df.iloc[-1]
-    resistencia = df['high'].rolling(25).max().iloc[-2]
-    soporte = df['low'].rolling(25).min().iloc[-2]
-    rango = resistencia - soporte
-    if rango == 0: return False, None
-    umbral = rango * 0.01
-    if abs(ultimo['close'] - resistencia) < umbral: return True, "resistencia"
-    if abs(ultimo['close'] - soporte) < umbral: return True, "soporte"
-    return False, None
-
-def confirmaciones(df, direccion):
-    ultimo = df.iloc[-1]
-    boll_ok = False
-    if direccion == "call" and ultimo['low'] <= ultimo['lower_band'] * 1.001:
-        boll_ok = True
-    if direccion == "put" and ultimo['high'] >= ultimo['upper_band'] * 0.999:
-        boll_ok = True
-
-    zig_ok = False
-    if direccion == "call" and df['zigzag'].iloc[-10:].isin([-1]).any():
-        zig_ok = True
-    if direccion == "put" and df['zigzag'].iloc[-10:].isin([1]).any():
-        zig_ok = True
-
-    frac_ok = False
-    if direccion == "call" and df['fractal_down'].iloc[-6:].any():
-        frac_ok = True
-    if direccion == "put" and df['fractal_up'].iloc[-6:].any():
-        frac_ok = True
-
-    return boll_ok and zig_ok and frac_ok
-
-# ---------------- 🎯 SEÑAL FINAL ----------------
-def get_signal(df1, df5):
-    if len(df1) < 80: return None
-    df1 = bollinger_bands(df1)
-    df1 = zigzag_detection(df1)
-    df1 = fractal_signal(df1)
-
-    direccion = get_trend_direction(df1)
-    if direccion is None: return None
-
-    zona_ok, tipo_zona = zona_clave(df1)
-    if not zona_ok: return None
-
-    if not vela_anterior_confirma_tendencia(df1, direccion):
-        return None
-
-    if not confirmaciones(df1, direccion): return None
-
-    if (direccion == "call" and tipo_zona == "soporte") or \
-       (direccion == "put" and tipo_zona == "resistencia"):
-        return direccion
-
-    return None
-
-def score_market(df1, df5):
-    vela = df1.iloc[-1]
-    cuerpo = abs(vela['open'] - vela['close'])
-    rango = vela['high'] - vela['low']
-    if rango == 0: return 0
-    calidad = (cuerpo / rango) * 100
-    if calidad >= 70: return 9
-    if calidad >= 50: return 6
-    return 3
-
-
-# ==================================================
-# 🤖 GESTIÓN DEL BOT - COMANDOS /START /STOP
-# ==================================================
-
-class RiskManager:
-    def __init__(self):
-        self.daily = 0
-        self.max_daily = MAX_DAILY_TRADES
-    def can_trade(self):
-        return self.daily < self.max_daily
-    def register_trade(self):
-        self.daily += 1
-
-# ---------------- 🆕 COMANDOS TELEGRAM ----------------
-def check_telegram_commands():
-    global BOT_RUNNING, LAST_UPDATE_ID
-    try:
-        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={LAST_UPDATE_ID + 1}&timeout=2"
-        res = requests.get(url, timeout=5).json()
-        
-        if not res.get("ok"): 
-            return
-
-        for update in res.get("result", []):
-            LAST_UPDATE_ID = update['update_id']
-            
-            if "message" not in update or "text" not in update["message"]:
-                continue
-                
-            text = update["message"]["text"].strip().lower()
-            chat_id = str(update["message"]["chat"]["id"])
-
-            if chat_id != str(CHAT_ID):
-                continue
-
-            if text == "/start":
-                BOT_RUNNING = True
-                send("🟢 <b>BOT INICIADO ✅</b>\n✅ Solo opera si la vela anterior confirma\n✅ Solo a favor de la tendencia")
-            
-            elif text == "/stop":
-                BOT_RUNNING = False
-                send("🔴 <b>BOT DETENIDO ⏹️</b>\nUsa /start para volver a activar")
-
-    except Exception as e:
-        print(f"Error comandos: {e}")
-
-
-def send(msg):
+# ====================================================
+#   📱 COMUNICACIÓN TELEGRAM
+# ====================================================
+def send_telegram(mensaje):
     if TOKEN and CHAT_ID:
         try:
             requests.post(
                 f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"},
+                data={
+                    "chat_id": CHAT_ID,
+                    "text": mensaje,
+                    "parse_mode": "HTML"
+                },
                 timeout=5
             )
-        except: pass
+        except Exception as e:
+            print(f"Telegram Error: {e}")
 
-def reset_day():
-    global DAILY_TRADES, CURRENT_DAY, LOSS_STREAK, BOT_RUNNING
-    if datetime.utcnow().day != CURRENT_DAY:
+# ====================================================
+#   🔄 CONTROL DE DÍA Y CONEXIÓN
+# ====================================================
+def reiniciar_diario():
+    global DAILY_TRADES, CURRENT_DAY, LOSS_STREAK
+    hoy = datetime.utcnow().day
+    if hoy != CURRENT_DAY:
         DAILY_TRADES = 0
-        CURRENT_DAY = datetime.utcnow().day
         LOSS_STREAK = 0
-        if BOT_RUNNING:
-            send("🔄 <b>NUEVO DÍA 🌅</b>")
+        CURRENT_DAY = hoy
+        send_telegram("🔄 <b>NUEVO DÍA INICIADO</b> | Contadores reiniciados.")
 
-def connect():
+def conectar_iq():
     while True:
         try:
             iq = IQ_Option(EMAIL, PASSWORD)
-            status, _ = iq.connect()
-            if status:
-                iq.change_balance("PRACTICE")
-                send("✅ <b>CONECTADO A IQ OPTION</b>\nSistema listo. Escribe /start para empezar.")
+            conectado, razon = iq.connect()
+            if conectado:
+                # ⚠️ CAMBIA A "REAL" SI YA USAS DINERO REAL
+                iq.change_balance("PRACTICE") 
+                saldo = iq.get_balance()
+                send_telegram(f"""✅ <b>CONECTADO A IQ OPTION</b>
+💹 ACTIVO: {ASSET} (REAL)
+📊 MODO: ESTRUCTURA + RECHAZO + PATRONES
+💰 SALDO: ${saldo:.2f}""")
                 return iq
+            else:
+                send_telegram("❌ Error conexión: Reintentando...")
         except Exception as e:
-            send(f"❌ Error conexión: {str(e)}")
+            send_telegram(f"❌ FALLÓ CONEXIÓN: {str(e)}")
         time.sleep(5)
 
-def get_df(iq, pair, tf):
+# ====================================================
+#   📥 OBTENER DATOS DEL MERCADO (TIEMPO REAL)
+# ====================================================
+def obtener_datos(iq):
+    """
+    Obtiene EXACTAMENTE las últimas 60 velas cerradas + vela actual en formación
+    """
     try:
-        data = iq.get_candles(pair, tf, 120, time.time())
-        df = pd.DataFrame(data)
-        if df.empty: return None
+        # Pedimos 61 velas para tener 60 cerradas + la que se está formando
+        datos = iq.get_candles(ASSET, TIMEFRAME, WINDOW_ANALISIS + 1, time.time())
+        if not datos:
+            return None
+        
+        df = pd.DataFrame(datos)
         df.rename(columns={"max": "high", "min": "low"}, inplace=True)
+        
+        # Aseguramos tipos numéricos
         df['open'] = pd.to_numeric(df['open'])
         df['close'] = pd.to_numeric(df['close'])
         df['high'] = pd.to_numeric(df['high'])
         df['low'] = pd.to_numeric(df['low'])
+        
         return df
-    except: return None
+    except Exception as e:
+        send_telegram(f"⚠️ Error datos: {e}")
+        return None
 
-def candle_quality(df):
-    last = df.iloc[-1]
-    body = abs(last['open'] - last['close'])
-    wick_up = last['high'] - max(last['open'], last['close'])
-    wick_down = min(last['open'], last['close']) - last['low']
-    
-    # ✅ LÍNEA CORREGIDA: TENÍA INCOMPLETA, AHORA QUEDA COMPLETA
-    if wick_up > body * 1.2: 
-        return False
-    if wick_down > body * 1.2: 
-        return False
-    if body < ((last['high'] - last['low']) * 0.3): 
-        return False
-    return True
-
-
+# ====================================================
+#   🧠 BUCLE PRINCIPAL DE EJECUCIÓN
+# ====================================================
 def main():
-    global LOSS_STREAK, LAST_LOSS, DAILY_TRADES, BOT_RUNNING
-    iq = connect()
-    risk = RiskManager()
-    last_candle = None
-    signal = None
+    global LOSS_STREAK, LAST_LOSS_TIME, DAILY_TRADES, BOT_ACTIVO
+    iq = conectar_iq()
+    ultima_vela_procesada = None
+    señal_enviada = False
 
     while True:
         try:
-            check_telegram_commands()
-            reset_day()
+            reiniciar_diario()
+            tiempo_servidor = iq.get_server_timestamp()
+            segundo = tiempo_servidor % 60
+            minuto_actual = int(tiempo_servidor // 60)
 
-            if not BOT_RUNNING:
+            # ======================================
+            # 🛑 CONTROLES DE SEGURIDAD
+            # ======================================
+            if not BOT_ACTIVO:
                 time.sleep(1)
                 continue
-
-            if DAILY_TRADES >= MAX_DAILY_TRADES:
-                send("⛔ <b>LÍMITE DIARIO ALCANZADO 🛑</b>")
-                BOT_RUNNING = False
-                time.sleep(10)
-                continue
                 
+            if DAILY_TRADES >= MAX_DAILY_TRADES:
+                send_telegram("🛑 <b>LÍMITE DE OPERACIONES ALCANZADO</b>")
+                BOT_ACTIVO = False
+                continue
+
             if LOSS_STREAK >= MAX_LOSS_STREAK:
-                if time.time() - LAST_LOSS < PAUSE_TIME:
+                if time.time() - LAST_LOSS_TIME < PAUSE_TIME_AFTER_LOSS:
+                    # En pausa obligatoria
                     time.sleep(1)
                     continue
                 else:
-                    LOSS_STREAK = 0
+                    LOSS_STREAK = 0 # Reactivar tras pausa
 
-            server_time = iq.get_server_timestamp()
-            sec = server_time % 60
+            # ======================================
+            # 🔍 FASE 1: ANÁLISIS CONTINUO (TIEMPO REAL)
+            # Entre segundo 10 y 58: Analizamos como va formándose la vela
+            # ======================================
+            if 10 <= segundo <= 58:
+                df = obtener_datos(iq)
+                if df is None or len(df) < WINDOW_ANALISIS:
+                    continue
 
-            if 45 <= sec <= 58:
-                best_score = 0
-                best_pair = None
-                best_signal = None
+                # 1. Analizar Estructura: Encontrar Soportes y Resistencias RESPETADAS
+                soportes, resistencias = analizar_estructura(df, WINDOW_ANALISIS)
+                
+                # 2. Analizar Vela Actual: ¿Se acerca y RECHAZA esas zonas?
+                vela_actual = df.iloc[-1] # La última fila es la vela en vivo
+                hay_rechazo, direccion_rechazo, zona_tocada = verificar_rechazo(vela_actual, soportes, resistencias)
 
-                for pair in PAIRS:
-                    df1 = get_df(iq, pair, TIMEFRAME_M1)
-                    df5 = get_df(iq, pair, TIMEFRAME_M5)
+                # 3. Detectar Patrón de Velas (3V1R, etc)
+                patron_detectado, direccion_patron = detectar_patron(df)
 
-                    if df1 is None or df5 is None: continue
-                    if not candle_quality(df1): continue
+                # 📝 GUARDAMOS ESTADO PARA CUANDO CIERRE LA VELA
+                estado_analisis = {
+                    "rechazo": hay_rechazo,
+                    "direccion": direccion_rechazo,
+                    "zona": zona_tocada,
+                    "patron_ok": patron_detectado,
+                    "dir_patron": direccion_patron,
+                    "soportes": soportes,
+                    "resistencias": resistencias
+                }
 
-                    score = score_market(df1, df5)
-                    if score < 5: continue
+            # ======================================
+            # ⚡ FASE 2: DECISIÓN EN CIERRE DE VELA
+            # EXACTAMENTE al cambio de minuto (59.8s - 0.3s)
+            # ======================================
+            if 59.7 <= segundo <= 59.99 or 0 <= segundo <= 0.3:
+                
+                # Evitar procesar la misma vela 2 veces
+                if minuto_actual == ultima_vela_procesada:
+                    continue
+                ultima_vela_procesada = minuto_actual
 
-                    s = get_signal(df1, df5)
+                # Si no hicimos análisis previo, saltamos
+                if 'estado_analisis' not in locals():
+                    continue
 
-                    if s and score > best_score:
+                ea = estado_analisis # Atajo para leer mejor
+
+                # ==================================================
+                # ✅ CONDICIONES DE ENTRADA (TU LÓGICA EXACTA):
+                # 1. Hubo RECHAZO claro en zona fuerte
+                # 2. Se formó el PATRÓN de velas esperado
+                # 3. Dirección coincide (REVERSIÓN)
+                # ==================================================
+                
+                condiciones_cumplidas = False
+                direccion_final = None
+                mensaje_log = ""
+
+                # CASO 1: RECHAZO EN RESISTENCIA (PRECIO SUBIÓ, CHOCÓ, BAJARÁ -> PUT)
+                if ea["rechazo"] and ea["direccion"] == "bajista" and ea["patron_ok"] and ea["dir_patron"] == "bajista":
+                    direccion_final = "put"
+                    condiciones_cumplidas = True
+                    mensaje_log = f"""🔴 <b>SEÑAL DETECTADA: REVERSIÓN BAJISTA</b>
+📍 Zona: RESISTENCIA ({ea['zona']:.5f})
+📉 Acción: PRECIO RECHAZADO HACIA ABAJO
+🎯 Patrón: Confirmado x3
+⏱️ Entrada: CIERRE DE VELA"""
+
+                # CASO 2: RECHAZO EN SOPORTE (PRECIO BAJÓ, CHOCÓ, SUBIRÁ -> CALL)
+                elif ea["rechazo"] and ea["direccion"] == "alcista" and ea["patron_ok"] and ea["dir_patron"] == "alcista":
+                    direccion_final = "call"
+                    condiciones_cumplidas = True
+                    mensaje_log = f"""🟢 <b>SEÑAL DETECTADA: REVERSIÓN ALCISTA</b>
+📍 Zona: SOPORTE ({ea['zona']:.5f})
+📈 Acción: PRECIO RECHAZADO HACIA ARRIBA
+🎯 Patrón: Confirmado x3
+⏱️ Entrada: CIERRE DE VELA"""
+
+
+                # ======================================
+                # 🚀 EJECUTAR ORDEN SI TODO COINCIDE
+                # ======================================
+                if condiciones_cumplidas and direccion_final and ea["zona"] is not None:
+                    send_telegram(mensaje_log)
+                    
+                    # Ejecutar compra/venta en IQ Option
+                    status, trade_id = iq.buy(BASE_AMOUNT, ASSET, direccion_final, EXPIRATION)
+
+                    if status:
+                        DAILY_TRADES += 1
+                        tipo_op = "🟢 COMPRA (CALL)" if direccion_final == "call" else "🔴 VENTA (PUT)"
+                        send_telegram(f"""⚡ <b>OPERACIÓN EJECUTADA</b>
+💹 Activo: {ASSET}
+📈 Tipo: {tipo_op}
+💲 Monto: ${BASE_AMOUNT}
+🔄 #Op: {DAILY_TRADES}/{MAX_DAILY_TRADES}""")
+
+                        # ⏳ ESPERAR RESULTADO (65 Segundos)
+                        time.sleep(65)
+                        resultado = iq.check_win_v4(trade_id)
+
+                        if resultado < 0:
+                            LOSS_STREAK += 1
+                            LAST_LOSS_TIME = time.time()
+                            send_telegram(f"❌ <b>LOSS</b> | Saldo: ${resultado:.2f}\n⚠️ Rachas: {LOSS_STREAK}/{MAX_LOSS_STREAK}")
+                        else:
+                            LOSS_STREAK = 0
+                            send_telegram(f"✅ <b>WIN</b> | Ganancia: +${resultado:.2f}\n_________________________")
+                
+                # Reset señal para el siguiente ciclo
+                del estado_analisis
+
+            time.sleep(0.03) # Alta frecuencia para capturar el cierre exacto
+
+        except Exception as e:
+            send_telegram(f"💥 <b>ERROR CRÍTICO:</b> {str(e)}")
+            time.sleep(3)
+
+if __name__ == "__main__":
+    main()
