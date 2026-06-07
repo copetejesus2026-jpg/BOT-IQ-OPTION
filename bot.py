@@ -2,6 +2,7 @@ import time
 import os
 import requests
 import pandas as pd
+import numpy as np
 import sys
 import threading
 import logging
@@ -100,7 +101,7 @@ def listen_commands():
 
         except Exception as e:
             logging.error(f"Comandos: {str(e)}")
-        time.sleep(1)
+            time.sleep(1)
 
 # ====================================================
 # 🔄 REINICIO DIARIO
