@@ -16,10 +16,10 @@ logging.basicConfig(
 )
 
 # ==========================================
-# ⚙️ CONFIGURACIÓN ALTA PRECISIÓN
-# ✅ Control por /start y /stop
-# ✅ Lectura directa de gráficos en vivo
-# ✅ Error corregido
+# ⚙️ CONFIGURACIÓN
+# ✅ Control /start /stop
+# ✅ Lectura datos en vivo
+# ✅ Error Series completamente corregido
 # ==========================================
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
@@ -135,7 +135,7 @@ def connect():
             iq = IQ_Option(EMAIL, PASSWORD)
             ok, reason = iq.connect()
             if ok:
-                iq.change_balance("PRACTICE")  # Cambiar a "REAL" si deseas operar con dinero real
+                iq.change_balance("PRACTICE")
                 balance = iq.get_balance()
                 send(f"✅ <b>CONECTADO EXITOSAMENTE</b>\nSaldo: ${balance:.2f}\nLeyendo datos en tiempo real.")
                 return iq
@@ -225,7 +225,6 @@ def main():
             mejor_opcion = None
             mayor_fuerza = 0
 
-            # Analizar entre 35 y 55 segundos
             if 35 <= sec <= 55:
                 for pair in PAIRS:
                     df = get_df(iq, pair)
@@ -239,7 +238,6 @@ def main():
                             mayor_fuerza = fuerza
                             mejor_opcion = (pair, signal, fuerza, direccion)
 
-            # Ejecutar señal al final del minuto
             if 57 <= sec <= 59.9 and mejor_opcion is not None:
                 pair, signal, fuerza, direccion = mejor_opcion
 
