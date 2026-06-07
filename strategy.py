@@ -2,9 +2,9 @@ import numpy as np
 import pandas as pd
 
 # ==================================================
-# 🚀 ESTRATEGIA - ERROR COMPLETAMENTE ELIMINADO
-# ✅ Todas las comparaciones usan valores numéricos
-# ✅ Sin ambigüedad de Pandas Series
+# 🚀 ESTRATEGIA ESTABLE - ERROR COMPLETAMENTE ELIMINADO
+# ✅ Todas las operaciones usan valores numéricos simples
+# ✅ 100% compatible con Pandas
 # ✅ Alta precisión en entradas
 # ==================================================
 
@@ -14,14 +14,13 @@ def get_trend_signal(df):
 
     df = df.copy()
 
-    # Medias móviles
+    # Cálculo de indicadores
     df['ema8'] = df['close'].ewm(span=8, adjust=False).mean()
     df['ema13'] = df['close'].ewm(span=13, adjust=False).mean()
     df['ema21'] = df['close'].ewm(span=21, adjust=False).mean()
     df['ema34'] = df['close'].ewm(span=34, adjust=False).mean()
     df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
 
-    # RSI
     delta = df['close'].diff()
     gain = delta.where(delta > 0, 0.0)
     loss = -delta.where(delta < 0, 0.0)
@@ -30,12 +29,10 @@ def get_trend_signal(df):
     rs = avg_gain / avg_loss
     df['rsi'] = 100.0 - (100.0 / (1.0 + rs))
 
-    # MACD
     df['macd'] = df['ema13'] - df['ema34']
     df['signal'] = df['macd'].ewm(span=9, adjust=False).mean()
     df['hist'] = df['macd'] - df['signal']
 
-    # ADX
     df['tr'] = np.maximum(
         df['high'] - df['low'],
         np.maximum(
@@ -64,136 +61,120 @@ def get_trend_signal(df):
     dx = 100.0 * abs(di_plus - di_minus) / di_sum
     df['adx'] = dx.rolling(14).mean()
 
-    # Extraer valores ÚNICOS como números float
+    # --- EXTRACCIÓN SEGURA DE VALORES (SOLUCIÓN DEL ERROR) ---
     try:
-        v1 = df.iloc[-1]
-        v2 = df.iloc[-2]
-        v3 = df.iloc[-3]
-        v4 = df.iloc[-4]
-        v5 = df.iloc[-5]
+        # Extraemos cada valor individualmente y lo convertimos a número
+        adx1 = float(df['adx'].iloc[-1])
+        adx2 = float(df['adx'].iloc[-2])
+        adx3 = float(df['adx'].iloc[-3])
 
-        # Convertir todo a float explícitamente
-        adx1 = float(v1['adx'])
-        adx2 = float(v2['adx'])
-        adx3 = float(v3['adx'])
+        e8_1 = float(df['ema8'].iloc[-1])
+        e13_1 = float(df['ema13'].iloc[-1])
+        e21_1 = float(df['ema21'].iloc[-1])
+        e34_1 = float(df['ema34'].iloc[-1])
+        e50_1 = float(df['ema50'].iloc[-1])
 
-        ema8_1 = float(v1['ema8'])
-        ema13_1 = float(v1['ema13'])
-        ema21_1 = float(v1['ema21'])
-        ema34_1 = float(v1['ema34'])
-        ema50_1 = float(v1['ema50'])
+        e8_2 = float(df['ema8'].iloc[-2])
+        e13_2 = float(df['ema13'].iloc[-2])
+        e21_2 = float(df['ema21'].iloc[-2])
 
-        ema8_2 = float(v2['ema8'])
-        ema13_2 = float(v2['ema13'])
-        ema21_2 = float(v2['ema21'])
+        l1 = float(df['low'].iloc[-1])
+        l2 = float(df['low'].iloc[-2])
+        l3 = float(df['low'].iloc[-3])
+        l4 = float(df['low'].iloc[-4])
 
-        low1 = float(v1['low'])
-        low2 = float(v2['low'])
-        low3 = float(v3['low'])
-        low4 = float(v4['low'])
+        h1 = float(df['high'].iloc[-1])
+        h2 = float(df['high'].iloc[-2])
+        h3 = float(df['high'].iloc[-3])
+        h4 = float(df['high'].iloc[-4])
 
-        high1 = float(v1['high'])
-        high2 = float(v2['high'])
-        high3 = float(v3['high'])
-        high4 = float(v4['high'])
+        c1 = float(df['close'].iloc[-1])
+        o1 = float(df['open'].iloc[-1])
+        o2 = float(df['open'].iloc[-2])
+        o3 = float(df['open'].iloc[-3])
+        o4 = float(df['open'].iloc[-4])
 
-        close1 = float(v1['close'])
-        macd1 = float(v1['macd'])
-        signal1 = float(v1['signal'])
-        hist1 = float(v1['hist'])
-        hist2 = float(v2['hist'])
-        hist3 = float(v3['hist'])
-        rsi1 = float(v1['rsi'])
+        macd1 = float(df['macd'].iloc[-1])
+        sig1 = float(df['signal'].iloc[-1])
+        hist1 = float(df['hist'].iloc[-1])
+        hist2 = float(df['hist'].iloc[-2])
+        hist3 = float(df['hist'].iloc[-3])
 
-        open1 = float(v1['open'])
-        volume1 = float(v1['volume'])
+        rsi1 = float(df['rsi'].iloc[-1])
+        vol1 = float(df['volume'].iloc[-1])
+        vol_prom = float(df['volume'].iloc[-18:-1].mean())
+        rango_prom = float((df['high'].iloc[-18:-1] - df['low'].iloc[-18:-1]).mean())
 
-        # Extraer secuencia de dirección de velas (CORRECCIÓN FINAL)
-        dir1 = 1 if float(v1['close']) > float(v1['open']) else -1
-        dir2 = 1 if float(v2['close']) > float(v2['open']) else -1
-        dir3 = 1 if float(v3['close']) > float(v3['open']) else -1
-        dir4 = 1 if float(v4['close']) > float(v4['open']) else -1
-        dir5 = 1 if float(v5['close']) > float(v5['open']) else -1
-
-    except Exception as e:
+    except Exception:
         return None
 
     # Filtro de fuerza mínima
     if adx1 < 27.0:
         return None
 
-    tendencia = "lateral"
-    fuerza_base = 0
+    fuerza = 0
+    senal = None
+    tipo = ""
 
-    # ==============================================
-    # ✅ CONDICIÓN ALCISTA
-    # ==============================================
-    cond_alcista = (
-        ema8_1 > ema13_1 > ema21_1 > ema34_1 > ema50_1 and
-        ema8_2 > ema13_2 > ema21_2 and
-        low1 > low2 and low2 > low3 and low3 > low4 and
-        high1 > high2 and high2 > high3 and
-        close1 > ema8_1 and close1 < ema21_1 * 1.012 and
-        macd1 > signal1 and hist1 > hist2 and hist2 > hist3 and
+    # --- CONDICIÓN DE COMPRA (ALCISTA) ---
+    cond_compra = (
+        e8_1 > e13_1 > e21_1 > e34_1 > e50_1 and
+        e8_2 > e13_2 > e21_2 and
+        l1 > l2 and l2 > l3 and l3 > l4 and
+        h1 > h2 and h2 > h3 and
+        c1 > e8_1 and c1 < e21_1 * 1.012 and
+        macd1 > sig1 and hist1 > hist2 and hist2 > hist3 and
         51.0 < rsi1 < 63.0 and
         adx1 > adx2 and adx2 > adx3 and
-        dir1 == 1 and dir2 == 1 and dir3 == 1 and dir4 == 1
+        c1 > o1 and c1 > o2 and c1 > o3 and c1 > o4
     )
 
-    if cond_alcista:
-        distancia = (close1 - ema21_1) / ema21_1 * 100.0
-        if distancia > 1.2:
-            return None
-        tendencia = "alcista"
-        fuerza_base = 70
+    if cond_compra:
+        distancia = (c1 - e21_1) / e21_1 * 100.0
+        if distancia <= 1.2:
+            senal = "call"
+            tipo = "alcista"
+            fuerza = 70
 
-    # ==============================================
-    # ✅ CONDICIÓN BAJISTA
-    # ==============================================
-    cond_bajista = (
-        ema8_1 < ema13_1 < ema21_1 < ema34_1 < ema50_1 and
-        ema8_2 < ema13_2 < ema21_2 and
-        high1 < high2 and high2 < high3 and high3 < high4 and
-        low1 < low2 and low2 < low3 and
-        close1 < ema8_1 and close1 > ema21_1 * 0.988 and
-        macd1 < signal1 and hist1 < hist2 and hist2 < hist3 and
+    # --- CONDICIÓN DE VENTA (BAJISTA) ---
+    cond_venta = (
+        e8_1 < e13_1 < e21_1 < e34_1 < e50_1 and
+        e8_2 < e13_2 < e21_2 and
+        h1 < h2 and h2 < h3 and h3 < h4 and
+        l1 < l2 and l2 < l3 and
+        c1 < e8_1 and c1 > e21_1 * 0.988 and
+        macd1 < sig1 and hist1 < hist2 and hist2 < hist3 and
         37.0 < rsi1 < 49.0 and
         adx1 > adx2 and adx2 > adx3 and
-        dir1 == -1 and dir2 == -1 and dir3 == -1 and dir4 == -1
+        c1 < o1 and c1 < o2 and c1 < o3 and c1 < o4
     )
 
-    if cond_bajista:
-        distancia = (ema21_1 - close1) / ema21_1 * 100.0
-        if distancia > 1.2:
-            return None
-        tendencia = "bajista"
-        fuerza_base = 70
+    if cond_venta:
+        distancia = (e21_1 - c1) / e21_1 * 100.0
+        if distancia <= 1.2:
+            senal = "put"
+            tipo = "bajista"
+            fuerza = 70
 
-    if tendencia == "lateral":
+    if senal is None:
         return None
 
-    # ==============================================
-    # ✅ FILTROS DE CALIDAD
-    # ==============================================
-    ultimas = df.tail(18)
-    rango_prom = float((ultimas['high'] - ultimas['low']).mean())
-    vol_prom = float(ultimas['volume'].mean())
-    tamaño_vela = high1 - low1
-
-    if tamaño_vela < rango_prom * 0.68:
+    # --- FILTROS DE CALIDAD ADICIONALES ---
+    vela_tam = h1 - l1
+    if vela_tam < rango_prom * 0.68:
         return None
-    fuerza_base += 10
+    fuerza += 10
 
-    if volume1 < vol_prom * 0.8:
+    if vol1 < vol_prom * 0.8:
         return None
-    fuerza_base += 10
+    fuerza += 10
 
-    cuerpo = abs(close1 - open1)
-    if cuerpo < tamaño_vela * 0.52:
+    cuerpo = abs(c1 - o1)
+    if cuerpo < vela_tam * 0.52:
         return None
-    fuerza_base += 10
+    fuerza += 10
 
-    return (tendencia == "alcista" and "call" or "put", min(fuerza_base, 100), tendencia)
+    return (senal, min(fuerza, 100), tipo)
 
 def pro_signal(df):
     return None
