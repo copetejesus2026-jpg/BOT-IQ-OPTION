@@ -2,10 +2,10 @@ import numpy as np
 import pandas as pd
 
 # ==================================================
-# 🚀 ESTRATEGIA ESTABLE - ERROR COMPLETAMENTE ELIMINADO
-# ✅ Todas las operaciones usan valores numéricos simples
-# ✅ 100% compatible con Pandas
-# ✅ Alta precisión en entradas
+# 🚀 ESTRATEGIA 100% COMPATIBLE - ERROR ELIMINADO
+# ✅ Extracción explícita de valores individuales
+# ✅ Sin ambigüedad en Pandas
+# ✅ Compatible con Railway / cualquier entorno
 # ==================================================
 
 def get_trend_signal(df):
@@ -14,13 +14,17 @@ def get_trend_signal(df):
 
     df = df.copy()
 
-    # Cálculo de indicadores
+    # --------------------------
+    # CÁLCULO DE INDICADORES
+    # --------------------------
+    # Medias móviles
     df['ema8'] = df['close'].ewm(span=8, adjust=False).mean()
     df['ema13'] = df['close'].ewm(span=13, adjust=False).mean()
     df['ema21'] = df['close'].ewm(span=21, adjust=False).mean()
     df['ema34'] = df['close'].ewm(span=34, adjust=False).mean()
     df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
 
+    # RSI
     delta = df['close'].diff()
     gain = delta.where(delta > 0, 0.0)
     loss = -delta.where(delta < 0, 0.0)
@@ -29,10 +33,12 @@ def get_trend_signal(df):
     rs = avg_gain / avg_loss
     df['rsi'] = 100.0 - (100.0 / (1.0 + rs))
 
+    # MACD
     df['macd'] = df['ema13'] - df['ema34']
     df['signal'] = df['macd'].ewm(span=9, adjust=False).mean()
     df['hist'] = df['macd'] - df['signal']
 
+    # ADX
     df['tr'] = np.maximum(
         df['high'] - df['low'],
         np.maximum(
@@ -61,54 +67,62 @@ def get_trend_signal(df):
     dx = 100.0 * abs(di_plus - di_minus) / di_sum
     df['adx'] = dx.rolling(14).mean()
 
-    # --- EXTRACCIÓN SEGURA DE VALORES (SOLUCIÓN DEL ERROR) ---
+    # --------------------------
+    # EXTRACCIÓN SEGURA DE VALORES
+    # --------------------------
     try:
-        # Extraemos cada valor individualmente y lo convertimos a número
-        adx1 = float(df['adx'].iloc[-1])
-        adx2 = float(df['adx'].iloc[-2])
-        adx3 = float(df['adx'].iloc[-3])
+        # Convertimos CADA valor a float explícitamente con .item()
+        adx1 = float(df['adx'].iloc[-1].item())
+        adx2 = float(df['adx'].iloc[-2].item())
+        adx3 = float(df['adx'].iloc[-3].item())
 
-        e8_1 = float(df['ema8'].iloc[-1])
-        e13_1 = float(df['ema13'].iloc[-1])
-        e21_1 = float(df['ema21'].iloc[-1])
-        e34_1 = float(df['ema34'].iloc[-1])
-        e50_1 = float(df['ema50'].iloc[-1])
+        e8_1 = float(df['ema8'].iloc[-1].item())
+        e13_1 = float(df['ema13'].iloc[-1].item())
+        e21_1 = float(df['ema21'].iloc[-1].item())
+        e34_1 = float(df['ema34'].iloc[-1].item())
+        e50_1 = float(df['ema50'].iloc[-1].item())
 
-        e8_2 = float(df['ema8'].iloc[-2])
-        e13_2 = float(df['ema13'].iloc[-2])
-        e21_2 = float(df['ema21'].iloc[-2])
+        e8_2 = float(df['ema8'].iloc[-2].item())
+        e13_2 = float(df['ema13'].iloc[-2].item())
+        e21_2 = float(df['ema21'].iloc[-2].item())
 
-        l1 = float(df['low'].iloc[-1])
-        l2 = float(df['low'].iloc[-2])
-        l3 = float(df['low'].iloc[-3])
-        l4 = float(df['low'].iloc[-4])
+        l1 = float(df['low'].iloc[-1].item())
+        l2 = float(df['low'].iloc[-2].item())
+        l3 = float(df['low'].iloc[-3].item())
+        l4 = float(df['low'].iloc[-4].item())
 
-        h1 = float(df['high'].iloc[-1])
-        h2 = float(df['high'].iloc[-2])
-        h3 = float(df['high'].iloc[-3])
-        h4 = float(df['high'].iloc[-4])
+        h1 = float(df['high'].iloc[-1].item())
+        h2 = float(df['high'].iloc[-2].item())
+        h3 = float(df['high'].iloc[-3].item())
+        h4 = float(df['high'].iloc[-4].item())
 
-        c1 = float(df['close'].iloc[-1])
-        o1 = float(df['open'].iloc[-1])
-        o2 = float(df['open'].iloc[-2])
-        o3 = float(df['open'].iloc[-3])
-        o4 = float(df['open'].iloc[-4])
+        c1 = float(df['close'].iloc[-1].item())
+        c2 = float(df['close'].iloc[-2].item())
+        c3 = float(df['close'].iloc[-3].item())
+        c4 = float(df['close'].iloc[-4].item())
 
-        macd1 = float(df['macd'].iloc[-1])
-        sig1 = float(df['signal'].iloc[-1])
-        hist1 = float(df['hist'].iloc[-1])
-        hist2 = float(df['hist'].iloc[-2])
-        hist3 = float(df['hist'].iloc[-3])
+        o1 = float(df['open'].iloc[-1].item())
+        o2 = float(df['open'].iloc[-2].item())
+        o3 = float(df['open'].iloc[-3].item())
+        o4 = float(df['open'].iloc[-4].item())
 
-        rsi1 = float(df['rsi'].iloc[-1])
-        vol1 = float(df['volume'].iloc[-1])
-        vol_prom = float(df['volume'].iloc[-18:-1].mean())
-        rango_prom = float((df['high'].iloc[-18:-1] - df['low'].iloc[-18:-1]).mean())
+        macd1 = float(df['macd'].iloc[-1].item())
+        sig1 = float(df['signal'].iloc[-1].item())
+        hist1 = float(df['hist'].iloc[-1].item())
+        hist2 = float(df['hist'].iloc[-2].item())
+        hist3 = float(df['hist'].iloc[-3].item())
+
+        rsi1 = float(df['rsi'].iloc[-1].item())
+        vol1 = float(df['volume'].iloc[-1].item())
+        vol_prom = float(df['volume'].iloc[-18:-1].mean().item())
+        rango_prom = float((df['high'].iloc[-18:-1] - df['low'].iloc[-18:-1]).mean().item())
 
     except Exception:
         return None
 
-    # Filtro de fuerza mínima
+    # --------------------------
+    # FILTROS Y CONDICIONES
+    # --------------------------
     if adx1 < 27.0:
         return None
 
@@ -116,7 +130,7 @@ def get_trend_signal(df):
     senal = None
     tipo = ""
 
-    # --- CONDICIÓN DE COMPRA (ALCISTA) ---
+    # Condición COMPRA
     cond_compra = (
         e8_1 > e13_1 > e21_1 > e34_1 > e50_1 and
         e8_2 > e13_2 > e21_2 and
@@ -126,7 +140,7 @@ def get_trend_signal(df):
         macd1 > sig1 and hist1 > hist2 and hist2 > hist3 and
         51.0 < rsi1 < 63.0 and
         adx1 > adx2 and adx2 > adx3 and
-        c1 > o1 and c1 > o2 and c1 > o3 and c1 > o4
+        c1 > o1 and c2 > o2 and c3 > o3 and c4 > o4
     )
 
     if cond_compra:
@@ -136,7 +150,7 @@ def get_trend_signal(df):
             tipo = "alcista"
             fuerza = 70
 
-    # --- CONDICIÓN DE VENTA (BAJISTA) ---
+    # Condición VENTA
     cond_venta = (
         e8_1 < e13_1 < e21_1 < e34_1 < e50_1 and
         e8_2 < e13_2 < e21_2 and
@@ -146,7 +160,7 @@ def get_trend_signal(df):
         macd1 < sig1 and hist1 < hist2 and hist2 < hist3 and
         37.0 < rsi1 < 49.0 and
         adx1 > adx2 and adx2 > adx3 and
-        c1 < o1 and c1 < o2 and c1 < o3 and c1 < o4
+        c1 < o1 and c2 < o2 and c3 < o3 and c4 < o4
     )
 
     if cond_venta:
@@ -159,7 +173,7 @@ def get_trend_signal(df):
     if senal is None:
         return None
 
-    # --- FILTROS DE CALIDAD ADICIONALES ---
+    # Filtros de calidad adicionales
     vela_tam = h1 - l1
     if vela_tam < rango_prom * 0.68:
         return None
