@@ -19,7 +19,7 @@ logging.basicConfig(
 # ⚙️ CONFIGURACIÓN
 # ✅ Control /start /stop
 # ✅ Lectura datos en vivo
-# ✅ Error Series completamente corregido
+# ✅ Error Series completamente solucionado
 # ==========================================
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
@@ -295,4 +295,3 @@ if __name__ == "__main__":
     if missing:
         print(f"❌ Faltan variables de entorno: {', '.join(missing)}")
         sys.exit(1)
-    main()
