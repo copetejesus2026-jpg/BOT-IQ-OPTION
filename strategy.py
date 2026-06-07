@@ -1,148 +1,153 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 # ==================================================
-# 🧠 ESTRATEGIA: ESTRUCTURA + RECHAZO + PATRONES
-# 🎯 ACTIVO: EURUSD | 1MIN | REVERSIÓN
-# 📏 LÓGICA: Analiza últimas 60 velas, busca zonas
-# respetadas, medir mechas/rechazo, detectar secuencias
+# 🚀 ESTRATEGIA CORREGIDA - ALTA PRECISIÓN
+# ✅ Error de Series solucionado
+# ✅ Solo entradas de alta calidad
+# ✅ Evita consolidación y fin de tendencia
 # ==================================================
 
-# ============================================
-# 🏗️ 1. ANALIZAR ESTRUCTURA - DETECTAR ZONAS
-# Busca los niveles que el precio HA RESPETADO YA
-# en las ultimas N velas (max/min significativos)
-# ============================================
-def analizar_estructura(df, n_velas=60):
-    """
-    Devuelve listas de soportes y resistencias claras
-    basado en Mínimos y Máximos relevantes de las últimas velas.
-    """
-    # Trabajamos solo con las N velas más recientes
-    data = df.tail(n_velas).copy()
-    
-    soportes = []
-    resistencias = []
-    
-    # 📏 VENTANA PARA MÁX/MÍN: Buscamos giros locales
-    # Un mínimo es punto bajo si los 2 anteriores y 2 siguientes son más altos
-    for i in range(3, len(data)-3):
-        # DETECTAR SOPORTE (Mínimo Local / VALLE)
-        min_local = data['low'].iloc[i]
-        if (min_local < data['low'].iloc[i-1] and 
-            min_local < data['low'].iloc[i-2] and
-            min_local < data['low'].iloc[i+1] and 
-            min_local < data['low'].iloc[i+2]):
-            soportes.append(round(min_local, 5))
+def get_trend_signal(df):
+    if len(df) < 40:
+        return None
 
-        # DETECTAR RESISTENCIA (Máximo Local / PICO)
-        max_local = data['high'].iloc[i]
-        if (max_local > data['high'].iloc[i-1] and 
-            max_local > data['high'].iloc[i-2] and
-            max_local > data['high'].iloc[i+1] and 
-            max_local > data['high'].iloc[i+2]):
-            resistencias.append(round(max_local, 5))
+    df = df.copy()
 
-    # 🧹 LIMPIEZA: Eliminar niveles repetidos o muy cercanos (ruido)
-    soportes = sorted(list(set(soportes)))
-    resistencias = sorted(list(set(resistencias)))
+    # Medias móviles
+    df['ema8'] = df['close'].ewm(span=8, adjust=False).mean()
+    df['ema13'] = df['close'].ewm(span=13, adjust=False).mean()
+    df['ema21'] = df['close'].ewm(span=21, adjust=False).mean()
+    df['ema34'] = df['close'].ewm(span=34, adjust=False).mean()
+    df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
 
-    # Filtrar: solo niveles donde el precio rebotó al menos 10 pips
-    soportes_filtrados = []
-    resistencias_filtradas = []
-    
-    # Simplificamos dejando los 3 niveles más fuertes (los extremos)
-    if len(soportes) >= 2:
-        soportes_filtrados = [min(soportes), np.median(soportes), max(soportes)]
-    if len(resistencias) >= 2:
-        resistencias_filtradas = [min(resistencias), np.median(resistencias), max(resistencias)]
+    # RSI
+    delta = df['close'].diff()
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    avg_gain = gain.rolling(window=14).mean()
+    avg_loss = loss.rolling(window=14).mean().replace(0, 0.001)
+    rs = avg_gain / avg_loss
+    df['rsi'] = 100 - (100 / (1 + rs))
 
-    return soportes_filtrados, resistencias_filtradas
+    # MACD
+    df['macd'] = df['ema13'] - df['ema34']
+    df['signal'] = df['macd'].ewm(span=9, adjust=False).mean()
+    df['hist'] = df['macd'] - df['signal']
 
-# ============================================
-# 🧨 2. MEDIR RECHAZO EN ZONAS
-# Analiza la VELA ACTUAL: ¿Tiene MECHA larga tocando zona?
-# ============================================
-def verificar_rechazo(vela, soportes, resistencias, tolerancia_pips=0.0003):
-    """
-    Comprueba si la vela actual está tocando una zona fuerte
-    y tiene una mecha grande indicando rechazo.
-    """
-    precio_actual_cierre = vela['close']
-    precio_bajo = vela['low']
-    precio_alto = vela['high']
-    cuerpo = abs(vela['open'] - vela['close'])
-    
-    # Definimos tamaño de mecha mínima para considerar rechazo (>= 1.5x cuerpo)
-    MECHA_MINIMA = cuerpo * 1.5 if cuerpo > 0 else 0.0002
+    # ADX
+    df['tr'] = np.maximum(df['high'] - df['low'],
+                          np.maximum(abs(df['high'] - df['close'].shift(1)),
+                                     abs(df['low'] - df['close'].shift(1))))
+    df['dm_plus'] = np.where((df['high'] - df['high'].shift(1)) > (df['low'].shift(1) - df['low']),
+                             np.maximum(df['high'] - df['high'].shift(1), 0), 0)
+    df['dm_minus'] = np.where((df['low'].shift(1) - df['low']) > (df['high'] - df['high'].shift(1)),
+                              np.maximum(df['low'].shift(1) - df['low'], 0), 0)
 
-    # 🔵 COMPROBAR RECHAZO ARRIBA -> VENDA (PUT)
-    # Precio toca Resistencia -> Sube mucho -> Baja rápido (Mecha arriba larga)
-    for r in resistencias:
-        # ¿El precio ALTO de esta vela ha tocado o superado la zona?
-        if abs(precio_alto - r) <= tolerancia_pips:
-            # ¿La mecha superior es LARGA? (Se fue arriba, rechazo, volvió abajo)
-            mecha_sup = precio_alto - max(vela['open'], vela['close'])
-            if mecha_sup >= MECHA_MINIMA:
-                # 🎯 CONFIRMACIÓN: El cierre quedó LEJOS de la zona tocada
-                if precio_actual_cierre < (r - tolerancia_pips):
-                    return True, "bajista", r # Rechazo fuerte -> Ir a PUT
+    tr14 = df['tr'].rolling(14).sum()
+    dmp14 = df['dm_plus'].rolling(14).sum()
+    dmm14 = df['dm_minus'].rolling(14).sum()
 
-    # 🟢 COMPROBAR RECHAZO ABAJO -> COMPRA (CALL)
-    # Precio toca Soporte -> Baja mucho -> Sube rápido (Mecha abajo larga)
-    for s in soportes:
-        # ¿El precio BAJO de esta vela ha tocado o bajado de la zona?
-        if abs(precio_bajo - s) <= tolerancia_pips:
-            # ¿La mecha inferior es LARGA? (Se fue abajo, rechazo, volvió arriba)
-            mecha_inf = min(vela['open'], vela['close']) - precio_bajo
-            if mecha_inf >= MECHA_MINIMA:
-                # 🎯 CONFIRMACIÓN: El cierre quedó LEJOS de la zona tocada
-                if precio_actual_cierre > (s + tolerancia_pips):
-                    return True, "alcista", s # Rechazo fuerte -> Ir a CALL
+    di_plus = 100 * dmp14 / tr14.replace(0, 0.001)
+    di_minus = 100 * dmm14 / tr14.replace(0, 0.001)
+    dx = 100 * abs(di_plus - di_minus) / (di_plus + di_minus).replace(0, 0.001)
+    df['adx'] = dx.rolling(14).mean()
 
-    return False, None, None
+    # Extraer ÚLTIMOS VALORES COMO NÚMEROS (CORRIGE EL ERROR)
+    v1 = df.iloc[-1]
+    v2 = df.iloc[-2]
+    v3 = df.iloc[-3]
+    v4 = df.iloc[-4]
+    v5 = df.iloc[-5]
 
-# ============================================
-# 🔁 3. DETECTAR PATRONES DE VELAS REPETITIVOS
-# Busca secuencias tipo: 🔵🔵🔵🔴 | 🔴🔴🔴🔵
-# que se repiten 2 veces, a la 3ª operamos
-# ============================================
-def detectar_patron(df):
-    """
-    Analiza las ultimas 10 velas cerradas.
-    Busca patron: [3 Verdes, 1 Roja] o [3 Rojas, 1 Verde]
-    Si este patron ocurre por 3ra vez, devuelve señal.
-    """
-    # Tomamos las últimas 10 velas YA CERRADAS
-    velas = df.tail(11).copy()
-    if len(velas) < 10:
-        return False, None
+    adx_v1 = float(v1['adx'])
+    adx_v2 = float(v2['adx'])
+    adx_v3 = float(v3['adx'])
 
-    # 🟩 = 1 (Verde/Alcista), 🟥 = -1 (Roja/Bajista)
-    velas['tipo'] = np.where(velas['close'] > velas['open'], 1, -1)
-    secuencia = velas['tipo'].tolist()
+    if adx_v1 < 27:
+        return None
 
-    contador_patron_alcista = 0 # Patron: [1,1,1,-1] -> 3V 1R
-    contador_patron_bajista = 0 # Patron: [-1,-1,-1,1] -> 3R 1V
+    tendencia = "lateral"
+    fuerza_base = 0
 
-    # Buscar ocurrencias del patrón mirando hacia atrás
-    for i in range(len(secuencia)-4, 0, -1):
-        # PATRÓN 1: 3 VERDES + 1 ROJA -> Fin subida, posible bajada
-        if secuencia[i] == 1 and secuencia[i+1] == 1 and secuencia[i+2] == 1 and secuencia[i+3] == -1:
-            contador_patron_bajista += 1
-            
-        # PATRÓN 2: 3 ROJAS + 1 VERDE -> Fin bajada, posible subida
-        if secuencia[i] == -1 and secuencia[i+1] == -1 and secuencia[i+2] == -1 and secuencia[i+3] == 1:
-            contador_patron_alcista += 1
+    # ==============================================
+    # ✅ TENDENCIA ALCISTA
+    # ==============================================
+    if (
+        float(v1['ema8']) > float(v1['ema13']) > float(v1['ema21']) > float(v1['ema34']) > float(v1['ema50']) and
+        float(v2['ema8']) > float(v2['ema13']) > float(v2['ema21']) and
+        float(v1['low']) > float(v2['low']) and float(v2['low']) > float(v3['low']) and float(v3['low']) > float(v4['low']) and
+        float(v1['high']) > float(v2['high']) and float(v2['high']) > float(v3['high']) and
+        float(v1['close']) > float(v1['ema8']) and float(v1['close']) < float(v1['ema21']) * 1.012 and
+        float(v1['macd']) > float(v1['signal']) and float(v1['hist']) > float(v2['hist']) and float(v2['hist']) > float(v3['hist']) and
+        51 < float(v1['rsi']) < 63 and
+        adx_v1 > adx_v2 and adx_v2 > adx_v3
+    ):
+        distancia = (float(v1['close']) - float(v1['ema21'])) / float(v1['ema21']) * 100
+        if distancia > 1.2:
+            return None
 
-    # ✅ REGLA: Si se ha repetido AL MENOS 2 VECES, y ahora es la 3ª
-    # Comprobamos si la ÚLTIMA SECUENCIA (actual) cumple el patrón
-    ult4 = secuencia[-4:]
+        tendencia = "alcista"
+        fuerza_base += 58
 
-    if ult4 == [1,1,1,-1] and contador_patron_bajista >= 2:
-        return True, "bajista" # 🎯 PATRÓN COMPLETO -> VENDER
+    # ==============================================
+    # ✅ TENDENCIA BAJISTA
+    # ==============================================
+    elif (
+        float(v1['ema8']) < float(v1['ema13']) < float(v1['ema21']) < float(v1['ema34']) < float(v1['ema50']) and
+        float(v2['ema8']) < float(v2['ema13']) < float(v2['ema21']) and
+        float(v1['high']) < float(v2['high']) and float(v2['high']) < float(v3['high']) and float(v3['high']) < float(v4['high']) and
+        float(v1['low']) < float(v2['low']) and float(v2['low']) < float(v3['low']) and
+        float(v1['close']) < float(v1['ema8']) and float(v1['close']) > float(v1['ema21']) * 0.988 and
+        float(v1['macd']) < float(v1['signal']) and float(v1['hist']) < float(v2['hist']) and float(v2['hist']) < float(v3['hist']) and
+        37 < float(v1['rsi']) < 49 and
+        adx_v1 > adx_v2 and adx_v2 > adx_v3
+    ):
+        distancia = (float(v1['ema21']) - float(v1['close'])) / float(v1['ema21']) * 100
+        if distancia > 1.2:
+            return None
 
-    if ult4 == [-1,-1,-1,1] and contador_patron_alcista >= 2:
-        return True, "alcista" # 🎯 PATRÓN COMPLETO -> COMPRAR
+        tendencia = "bajista"
+        fuerza_base += 58
 
-    return False, None
+    if tendencia == "lateral":
+        return None
+
+    # ==============================================
+    # ✅ FILTROS DE CALIDAD
+    # ==============================================
+    ultimas = df.tail(18)
+    rango_prom = (ultimas['high'] - ultimas['low']).mean()
+    vol_prom = ultimas['volume'].mean()
+    tamaño_vela = float(v1['high']) - float(v1['low'])
+
+    if tamaño_vela < rango_prom * 0.68:
+        return None
+    fuerza_base += 10
+
+    if float(v1['volume']) < vol_prom * 0.8:
+        return None
+    fuerza_base += 10
+
+    cuerpo = abs(float(v1['close']) - float(v1['open']))
+    if cuerpo < tamaño_vela * 0.52:
+        return None
+    fuerza_base += 10
+
+    # Secuencia de confirmación
+    ultimas_5 = df.tail(5).copy()
+    ultimas_5['dir'] = np.where(ultimas_5['close'] > ultimas_5['open'], 1, -1)
+    secuencia = ultimas_5['dir'].tolist()
+
+    if tendencia == "alcista" and secuencia[-4:] == [1, 1, 1, 1]:
+        fuerza_base += 12
+        return ("call", min(fuerza_base, 100), "alcista")
+
+    if tendencia == "bajista" and secuencia[-4:] == [-1, -1, -1, -1]:
+        fuerza_base += 12
+        return ("put", min(fuerza_base, 100), "bajista")
+
+    return None
+
+def pro_signal(df):
+    return None
