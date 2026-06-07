@@ -16,10 +16,7 @@ logging.basicConfig(
 )
 
 # ==========================================
-# ⚙️ CONFIGURACIÓN
-# ✅ Control /start /stop
-# ✅ Lectura datos en vivo
-# ✅ Error Series completamente solucionado
+# ⚙️ CONFIGURACIÓN PRINCIPAL
 # ==========================================
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
@@ -51,7 +48,7 @@ LAST_TRADE = None
 BOT_RUNNING = False
 
 # ====================================================
-# 📱 TELEGRAM
+# 📱 FUNCIONES TELEGRAM
 # ====================================================
 def send(msg):
     if TOKEN and CHAT_ID:
