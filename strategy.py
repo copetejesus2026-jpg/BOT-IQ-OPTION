@@ -7,7 +7,7 @@ def get_reversal_signal(df, tolerancia_nivel=0.0022, ventana_niveles=5):
 
     df = df.copy()
 
-    # Cálculo de medias
+    # Cálculo de medias móviles
     df['ema8'] = df['close'].ewm(span=8, adjust=False).mean()
     df['ema13'] = df['close'].ewm(span=13, adjust=False).mean()
     df['ema21'] = df['close'].ewm(span=21, adjust=False).mean()
