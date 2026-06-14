@@ -27,24 +27,24 @@ BASE_AMOUNT = 250
 TIMEFRAME_M1 = 60
 
 PAIRS = [
-    "EURUSD-OTC", "GBPUSD-OTC", "EURGBP-OTC", "EURJPY-OTC", "GBPJPY-OTC",
-    "AUDUSD-OTC", "USDCAD-OTC", "USDCHF-OTC", "NZDUSD-OTC",
-    "EURCAD-OTC", "GBPCAD-OTC", "AUDJPY-OTC", "CADJPY-OTC"
+    "EURUSD-OTC", "GBPUSD-OTC", "EURGBP-OTC", "EURJPY-OTC", "USDCHF-OTC"
 ]
 
-MAX_DAILY_TRADES = 22
+MAX_DAILY_TRADES = 30
 MAX_LOSS_STREAK = 5
 PAUSE_TIME = 900
-MAX_RECONNECT_ATTEMPTS = 10
-RECONNECT_DELAY = 3
+MAX_RECONNECT_ATTEMPTS = 15
+RECONNECT_DELAY = 2
 
 FUERZA_MINIMA = 40
-TOLERANCIA_NIVEL = 0.0025
+TOLERANCIA_NIVEL = 0.0030
 VENTANA_NIVELES = 5
 
-TIEMPO_ESPERA_EJECUCION = 0.01
-REINTENTOS_EJECUCION = 4
-TIEMPO_MINIMO_VALIDO = 58
+# 🔧 MEJORAS PARA EJECUCIÓN
+TIEMPO_ESPERA_EJECUCION = 0.008
+REINTENTOS_EJECUCION = 6
+TIEMPO_MINIMO_VALIDO = 55  # Más margen de seguridad
+ESPERA_ENTRE_INTENTOS = 0.08
 
 # Variables globales
 DAILY_TRADES = 0
@@ -93,7 +93,7 @@ def listen_commands():
                 if text == "/start":
                     if not BOT_RUNNING:
                         BOT_RUNNING = True
-                        send("✅ <b>BOT INICIADO</b>\nAnaliza continuamente\nSolo COMPRA en sobreventa + reversión\nEjecución inmediata")
+                        send("✅ <b>BOT INICIADO</b>\nAnaliza continuamente\nSolo COMPRA en sobreventa + reversión\nEjecución reforzada con reintentos")
                     else:
                         send("ℹ️ El bot ya está activo.")
                 elif text == "/stop":
@@ -151,12 +151,12 @@ def connect():
         attempts += 1
         time.sleep(RECONNECT_DELAY)
     
-    send("💥 Reintentando en 60s...")
-    time.sleep(60)
+    send("💥 Reintentando en 30s...")
+    time.sleep(30)
     return connect()
 
 # 📥 OBTENER DATOS
-def get_df(iq, pair, retries=3):
+def get_df(iq, pair, retries=4):
     for _ in range(retries):
         try:
             if not iq or not iq.check_connect():
@@ -165,9 +165,9 @@ def get_df(iq, pair, retries=3):
                     time.sleep(1)
                     continue
 
-            data = iq.get_candles(pair, TIMEFRAME_M1, 30, time.time())
+            data = iq.get_candles(pair, TIMEFRAME_M1, 35, time.time())
             if not data or len(data) < 10:
-                time.sleep(0.3)
+                time.sleep(0.25)
                 continue
 
             df = pd.DataFrame(data)
@@ -177,38 +177,41 @@ def get_df(iq, pair, retries=3):
 
         except Exception as e:
             logging.error(f"Datos {pair}: {str(e)}")
-            time.sleep(0.4)
+            time.sleep(0.35)
     
     return None
 
-# 🚀 EJECUTAR OPERACIÓN
+# 🚀 EJECUTAR OPERACIÓN - CORREGIDO Y REFORZADO
 def ejecutar_operacion(iq, monto, par, direccion, vencimiento):
     for intento in range(REINTENTOS_EJECUCION + 1):
         try:
+            # Asegurar conexión antes de cada intento
             if not iq.check_connect():
                 iq = connect()
-                time.sleep(0.15)
+                time.sleep(0.1)
             
             tiempo_servidor = iq.get_server_timestamp()
             segundos_restantes = 60 - (tiempo_servidor % 60)
             
             if segundos_restantes < TIEMPO_MINIMO_VALIDO:
-                logging.warning(f"Tiempo insuficiente: {segundos_restantes}s")
-                return False, None
+                time.sleep(0.4)
+                continue  # Esperar siguiente vela en lugar de fallar
             
             time.sleep(TIEMPO_ESPERA_EJECUCION)
             status, trade_id = iq.buy(monto, par, direccion, vencimiento)
             
             if status and trade_id > 0:
+                logging.info(f"Ejecución exitosa en {par}, intento {intento+1}")
                 return True, trade_id
             
+            logging.warning(f"Intento {intento+1} fallido en {par}")
             if intento < REINTENTOS_EJECUCION:
-                time.sleep(0.15)
+                time.sleep(ESPERA_ENTRE_INTENTOS)
 
         except Exception as e:
-            logging.error(f"Ejecución: {str(e)}")
+            logging.error(f"Error intento {intento+1}: {str(e)}")
             if intento < REINTENTOS_EJECUCION:
-                time.sleep(0.15)
+                time.sleep(ESPERA_ENTRE_INTENTOS)
     
     return False, None
 
@@ -218,12 +221,12 @@ def main():
     threading.Thread(target=listen_commands, daemon=True).start()
 
     iq = connect()
-    send("ℹ️ <b>SISTEMA LISTO</b>\nAnaliza todos los activos continuamente\nSolo compra en sobreventa\nEnvía /start para iniciar")
+    send("ℹ️ <b>SISTEMA LISTO</b>\nAnaliza todos los activos continuamente\nSolo compra en sobreventa\nEjecución reforzada\nEnvía /start para iniciar")
 
     while True:
         try:
             if not BOT_RUNNING:
-                time.sleep(0.3)
+                time.sleep(0.25)
                 continue
 
             reset_day()
@@ -268,7 +271,7 @@ def main():
             if mejor_opcion is not None:
                 pair, signal, fuerza, tipo = mejor_opcion
                 if (pair, signal) == LAST_TRADE:
-                    time.sleep(0.3)
+                    time.sleep(0.25)
                     continue
                 LAST_TRADE = (pair, signal)
 
@@ -297,9 +300,9 @@ def main():
                     except Exception as e:
                         send(f"⚠️ Verificación: {str(e)}")
                 else:
-                    send(f"❌ No se pudo ejecutar en {pair}")
+                    send(f"❌ No se pudo ejecutar en {pair} tras varios intentos")
 
-            time.sleep(0.02)
+            time.sleep(0.018)
 
         except Exception as e:
             send(f"💥 Error: {str(e)} | Reiniciando...")
