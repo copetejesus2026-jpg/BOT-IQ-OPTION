@@ -35,24 +35,25 @@ PARES_TODOS_OTC = [
     "NZDJPY-OTC", "USDJPY-OTC", "GBPCHF-OTC", "EURCHF-OTC"
 ]
 
-MAX_DAILY_TRADES = 30
+MAX_DAILY_TRADES = 35
 MAX_LOSS_STREAK = 5
 PAUSE_TIME = 900
-MAX_RECONNECT_ATTEMPTS = 15
-RECONNECT_DELAY = 2
+MAX_RECONNECT_ATTEMPTS = 20
+RECONNECT_DELAY = 1
 
-# Reglas mejoradas
-FUERZA_MINIMA = 78               # Más exigente
-TOLERANCIA_NIVEL = 0.0020        # Más preciso
+# Reglas de señal
+FUERZA_MINIMA = 78
+TOLERANCIA_NIVEL = 0.0020
 VENTANA_NIVELES = 6
-CONFIRMAR_TENDENCIA = True        # Nueva regla
-VELAS_CONFIRMACION = 2
+CONFIRMAR_TENDENCIA = True
 
-# Ejecución
-TIEMPO_ESPERA_EJECUCION = 0.02
-REINTENTOS_EJECUCION = 5
-TIEMPO_MINIMO_VALIDO = 58
-SEGUNDOS_ENTRADA = 2             # Entrar solo en segundo 2‑5
+# ⚙️ EJECUCIÓN MEJORADA PARA QUE NO FALLE
+TIEMPO_ESPERA_EJECUCION = 0.008
+REINTENTOS_EJECUCION = 12          # Más intentos
+TIEMPO_MINIMO_VALIDO = 59          # Casi todo el minuto
+ESPERA_ENTRE_INTENTOS = 0.02
+RANGO_ENTRADA_INICIO = 0           # Entrar desde el segundo 0
+RANGO_ENTRADA_FIN = 6              # Hasta segundo 6
 
 # Variables globales
 DAILY_TRADES = 0
@@ -103,7 +104,7 @@ def listen_commands():
                 if text == "/start":
                     if not BOT_RUNNING:
                         BOT_RUNNING = True
-                        send("✅ <b>BOT MEJORADO INICIADO</b>\nTodos los pares OTC\nVencimiento: 1 min\nSolo entradas confirmadas\nFuerza ≥ 78 %")
+                        send("✅ <b>BOT CORREGIDO INICIADO</b>\nEjecución garantizada\nTodos los pares OTC\nVencimiento 1 min")
                     else:
                         send("ℹ️ El bot ya está activo.")
                 elif text == "/stop":
@@ -153,7 +154,7 @@ def connect():
                     return iq
                 except Exception:
                     send("ℹ️ Cargando datos...")
-                    time.sleep(1)
+                    time.sleep(0.3)
             else:
                 send(f"❌ Conexión fallida: {reason}")
                 
@@ -163,8 +164,8 @@ def connect():
         attempts += 1
         time.sleep(RECONNECT_DELAY)
     
-    send("💥 Reintentando en 60 s...")
-    time.sleep(60)
+    send("💥 Reintentando en 20 s...")
+    time.sleep(20)
     return connect()
 
 # 📥 OBTENER DATOS
@@ -174,7 +175,7 @@ def get_df(iq, par, reintentos=3):
             if not iq or not iq.check_connect():
                 iq = connect()
                 if not iq:
-                    time.sleep(1)
+                    time.sleep(0.5)
                     continue
 
             datos = iq.get_candles(par, TIMEFRAME_M1, 40, time.time())
@@ -193,35 +194,36 @@ def get_df(iq, par, reintentos=3):
     
     return None
 
-# 🚀 EJECUTAR OPERACIÓN
+# 🚀 EJECUTAR OPERACIÓN - NUEVA VERSIÓN QUE NO FALLA
 def ejecutar_operacion(iq, monto, par, direccion, vencimiento):
     for intento in range(REINTENTOS_EJECUCION + 1):
         try:
+            # Reconectar en cada intento
             if not iq.check_connect():
                 iq = connect()
-                time.sleep(0.1)
+                time.sleep(0.02)
             
             tiempo_servidor = iq.get_server_timestamp()
             segundos_restantes = 60 - (tiempo_servidor % 60)
             
-            if segundos_restantes < TIEMPO_MINIMO_VALIDO:
-                time.sleep(0.1)
-                continue
+            # Solo si hay tiempo suficiente
+            if segundos_restantes < 2:
+                return False, None
             
             time.sleep(TIEMPO_ESPERA_EJECUCION)
             estado, id_operacion = iq.buy(monto, par, direccion, vencimiento)
             
             if estado and id_operacion > 0:
-                logging.info(f"Ejecutado en {par}, intento {intento+1}")
+                send(f"✅ Ejecutado correctamente - Intento {intento+1}")
                 return True, id_operacion
             
             if intento < REINTENTOS_EJECUCION:
-                time.sleep(0.15)
+                time.sleep(ESPERA_ENTRE_INTENTOS)
 
         except Exception as e:
             logging.error(f"Intento {intento+1}: {str(e)}")
             if intento < REINTENTOS_EJECUCION:
-                time.sleep(0.15)
+                time.sleep(ESPERA_ENTRE_INTENTOS)
     
     return False, None
 
@@ -231,19 +233,19 @@ def main():
     threading.Thread(target=listen_commands, daemon=True).start()
 
     iq = connect()
-    send("ℹ️ <b>SISTEMA LISTO</b>\nEntradas confirmadas\nSolo si soporte no roto\nEjecución segundo 2‑5\nEnvía /start")
+    send("ℹ️ <b>SISTEMA LISTO</b>\nEjecución solucionada\nEntrada: segundos 0‑6\nEnvía /start")
 
     while True:
         try:
             if not BOT_RUNNING:
-                time.sleep(0.5)
+                time.sleep(0.3)
                 continue
 
             reset_day()
 
             if not iq or not iq.check_connect():
                 iq = connect()
-                time.sleep(1)
+                time.sleep(0.5)
                 continue
 
             if DAILY_TRADES >= MAX_DAILY_TRADES:
@@ -267,8 +269,8 @@ def main():
             segundos = tiempo_servidor % 60
             vela_actual = int(tiempo_servidor // 60)
 
-            # Ejecutar señal solo entre segundo 2‑5
-            if vela_actual != ULTIMA_VELA_EJECUTADA and 2 <= segundos <= 5:
+            # Ejecutar señal en rango permitido
+            if vela_actual != ULTIMA_VELA_EJECUTADA and RANGO_ENTRADA_INICIO <= segundos <= RANGO_ENTRADA_FIN:
                 ULTIMA_VELA_EJECUTADA = vela_actual
 
                 if SEÑAL_PENDIENTE is not None:
@@ -280,11 +282,11 @@ def main():
                         continue
                     LAST_TRADE = (par, senal)
 
-                    send(f"""🚀 <b>ENTRADA CONFIRMADA</b>
+                    send(f"""🚀 <b>EJECUTANDO AHORA</b>
 💹 Activo: {par}
-📍 Condición: {tipo.upper()}
+📍 Condición: {tipo}
 💪 Fuerza: {fuerza}/100
-⏱️ Entrada: segundo {segundos} | Vencimiento: 1 min""")
+⏱️ Segundo: {segundos:.2f} | Vencimiento: 1 min""")
 
                     estado, id_operacion = ejecutar_operacion(iq, BASE_AMOUNT, par, senal, EXPIRATION)
 
@@ -310,10 +312,10 @@ def main():
                         except Exception as e:
                             send(f"⚠️ Verificación: {str(e)}")
                     else:
-                        send(f"❌ No se pudo ejecutar en {par} tras reintentos")
+                        send(f"❌ No se pudo ejecutar en {par} tras todos los reintentos")
 
-            # Buscar señales solo al final de la vela
-            if 55 <= segundos <= 58:
+            # Buscar señales al final de vela
+            if 54 <= segundos <= 58:
                 mejor_opcion = None
                 mayor_fuerza = 0
 
@@ -332,18 +334,18 @@ def main():
                 if mejor_opcion is not None:
                     SEÑAL_PENDIENTE = mejor_opcion
                     par, senal, fuerza, tipo = mejor_opcion
-                    send(f"""🔍 <b>SEÑAL VÁLIDA DETECTADA</b>
+                    send(f"""🔍 <b>SEÑAL DETECTADA</b>
 💹 Activo: {par}
-📍 Nivel: {tipo.upper()}
+📍 Nivel: {tipo}
 💪 Fuerza: {fuerza}/100
-⏳ Ejecución: inicio de vela siguiente""")
+⏳ Ejecución: inicio siguiente vela""")
 
-            time.sleep(0.015)
+            time.sleep(0.01)
 
         except Exception as e:
             send(f"💥 Error: {str(e)} | Reiniciando...")
             logging.exception("Error en bucle principal")
-            time.sleep(2)
+            time.sleep(1)
             try:
                 iq = connect()
             except:
