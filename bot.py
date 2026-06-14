@@ -17,25 +17,24 @@ logging.basicConfig(
 )
 
 # ==========================================
-# ⚙️ CONFIGURACIÓN - EJECUCIÓN EN VELA SIGUIENTE
+# ⚙️ CONFIGURACIÓN
 # ==========================================
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-EXPIRATION = 1
+EXPIRATION = 2
 BASE_AMOUNT = 25
 TIMEFRAME_M1 = 60
 
-# Lista de pares OTC 24h
 PAIRS = [
     "EURUSD-OTC", "GBPUSD-OTC", "EURGBP-OTC", "EURJPY-OTC", "GBPJPY-OTC",
     "AUDUSD-OTC", "USDCAD-OTC", "USDCHF-OTC", "NZDUSD-OTC",
     "EURCAD-OTC", "GBPCAD-OTC", "AUDJPY-OTC", "CADJPY-OTC"
 ]
 
-MAX_DAILY_TRADES = 20
+MAX_DAILY_TRADES = 22
 MAX_LOSS_STREAK = 5
 PAUSE_TIME = 900
 MAX_RECONNECT_ATTEMPTS = 10
@@ -45,7 +44,6 @@ FUERZA_MINIMA = 35
 TOLERANCIA_NIVEL = 0.0022
 VENTANA_NIVELES = 5
 
-# Tiempos seguros
 TIEMPO_ESPERA_EJECUCION = 0.05
 REINTENTOS_EJECUCION = 3
 TIEMPO_MINIMO_VALIDO = 55
@@ -57,7 +55,7 @@ LOSS_STREAK = 0
 LAST_LOSS = 0
 LAST_TRADE = None
 BOT_RUNNING = False
-SEÑAL_PENDIENTE = None  # Aquí guardamos la señal para la vela siguiente
+SEÑAL_PENDIENTE = None
 
 # ====================================================
 # 📱 FUNCIONES TELEGRAM
@@ -227,7 +225,7 @@ def ejecutar_operacion(iq, monto, par, direccion, vencimiento):
     return False, None
 
 # ====================================================
-# 🧠 BUCLE PRINCIPAL - LÓGICA CORREGIDA
+# 🧠 BUCLE PRINCIPAL
 # ====================================================
 def main():
     global BOT_RUNNING, LOSS_STREAK, LAST_LOSS, DAILY_TRADES, LAST_TRADE, SEÑAL_PENDIENTE
@@ -271,9 +269,7 @@ def main():
             sec = server_time % 60
             current_candle = int(server_time // 60)
 
-            # ==========================================
-            # ✅ EJECUTAR SEÑAL PENDIENTE AL INICIO DE LA VELA NUEVA
-            # ==========================================
+            # Ejecutar señal pendiente al inicio de vela nueva
             if current_candle != last_candle:
                 last_candle = current_candle
                 
@@ -317,9 +313,7 @@ def main():
                     else:
                         send(f"❌ No se pudo ejecutar en {pair}")
 
-            # ==========================================
-            # 🔍 BUSCAR SEÑALES Y GUARDARLA PARA LA VELA SIGUIENTE
-            # ==========================================
+            # Buscar señales y guardar para vela siguiente
             if 10 <= sec <= 57:
                 mejor_opcion = None
                 mayor_fuerza = 0
@@ -336,7 +330,6 @@ def main():
                             mayor_fuerza = fuerza
                             mejor_opcion = (pair, signal, fuerza, tipo_nivel)
 
-                # ✅ Guardamos la señal al final de la vela actual
                 if 54 <= sec <= 57 and mejor_opcion is not None:
                     SEÑAL_PENDIENTE = mejor_opcion
                     pair, signal, fuerza, tipo_nivel = mejor_opcion
