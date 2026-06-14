@@ -38,13 +38,13 @@ PAUSE_TIME = 900
 MAX_RECONNECT_ATTEMPTS = 10
 RECONNECT_DELAY = 3
 
-FUERZA_MINIMA = 45
-TOLERANCIA_NIVEL = 0.0022
+FUERZA_MINIMA = 40
+TOLERANCIA_NIVEL = 0.0025
 VENTANA_NIVELES = 5
 
-TIEMPO_ESPERA_EJECUCION = 0.02
-REINTENTOS_EJECUCION = 3
-TIEMPO_MINIMO_VALIDO = 59
+TIEMPO_ESPERA_EJECUCION = 0.01
+REINTENTOS_EJECUCION = 4
+TIEMPO_MINIMO_VALIDO = 58
 
 # Variables globales
 DAILY_TRADES = 0
@@ -93,7 +93,7 @@ def listen_commands():
                 if text == "/start":
                     if not BOT_RUNNING:
                         BOT_RUNNING = True
-                        send("✅ <b>BOT INICIADO</b>\nRegla EXCLUSIVA: Solo VENTA en reversión por SOBRECOMPRA")
+                        send("✅ <b>BOT INICIADO</b>\nAnaliza continuamente\nSolo COMPRA en sobreventa + reversión\nEjecución inmediata")
                     else:
                         send("ℹ️ El bot ya está activo.")
                 elif text == "/stop":
@@ -156,7 +156,7 @@ def connect():
     return connect()
 
 # 📥 OBTENER DATOS
-def get_df(iq, pair, retries=2):
+def get_df(iq, pair, retries=3):
     for _ in range(retries):
         try:
             if not iq or not iq.check_connect():
@@ -165,9 +165,9 @@ def get_df(iq, pair, retries=2):
                     time.sleep(1)
                     continue
 
-            data = iq.get_candles(pair, TIMEFRAME_M1, 25, time.time())
-            if not data or len(data) < 8:
-                time.sleep(0.2)
+            data = iq.get_candles(pair, TIMEFRAME_M1, 30, time.time())
+            if not data or len(data) < 10:
+                time.sleep(0.3)
                 continue
 
             df = pd.DataFrame(data)
@@ -177,7 +177,7 @@ def get_df(iq, pair, retries=2):
 
         except Exception as e:
             logging.error(f"Datos {pair}: {str(e)}")
-            time.sleep(0.3)
+            time.sleep(0.4)
     
     return None
 
@@ -187,12 +187,13 @@ def ejecutar_operacion(iq, monto, par, direccion, vencimiento):
         try:
             if not iq.check_connect():
                 iq = connect()
-                time.sleep(0.1)
+                time.sleep(0.15)
             
             tiempo_servidor = iq.get_server_timestamp()
             segundos_restantes = 60 - (tiempo_servidor % 60)
             
             if segundos_restantes < TIEMPO_MINIMO_VALIDO:
+                logging.warning(f"Tiempo insuficiente: {segundos_restantes}s")
                 return False, None
             
             time.sleep(TIEMPO_ESPERA_EJECUCION)
@@ -202,11 +203,12 @@ def ejecutar_operacion(iq, monto, par, direccion, vencimiento):
                 return True, trade_id
             
             if intento < REINTENTOS_EJECUCION:
-                time.sleep(0.1)
+                time.sleep(0.15)
 
         except Exception as e:
+            logging.error(f"Ejecución: {str(e)}")
             if intento < REINTENTOS_EJECUCION:
-                time.sleep(0.1)
+                time.sleep(0.15)
     
     return False, None
 
@@ -216,12 +218,12 @@ def main():
     threading.Thread(target=listen_commands, daemon=True).start()
 
     iq = connect()
-    send("ℹ️ <b>SISTEMA LISTO</b>\nSolo busca VENTA en sobrecompra\nEntrada inmediata al detectar señal válida\nEnvía /start para operar")
+    send("ℹ️ <b>SISTEMA LISTO</b>\nAnaliza todos los activos continuamente\nSolo compra en sobreventa\nEnvía /start para iniciar")
 
     while True:
         try:
             if not BOT_RUNNING:
-                time.sleep(0.5)
+                time.sleep(0.3)
                 continue
 
             reset_day()
@@ -248,7 +250,7 @@ def main():
                     LAST_TRADE = None
                     send("✅ Pausa finalizada.")
 
-            # Buscar señal y ejecutar inmediatamente
+            # ANÁLISIS CONTINUO DE TODOS LOS ACTIVOS
             mejor_opcion = None
             mayor_fuerza = 0
             for pair in PAIRS:
@@ -262,28 +264,29 @@ def main():
                         mayor_fuerza = fuerza
                         mejor_opcion = (pair, signal, fuerza, tipo)
 
+            # EJECUTAR SI HAY SEÑAL
             if mejor_opcion is not None:
                 pair, signal, fuerza, tipo = mejor_opcion
                 if (pair, signal) == LAST_TRADE:
-                    time.sleep(0.2)
+                    time.sleep(0.3)
                     continue
                 LAST_TRADE = (pair, signal)
 
-                send(f"""🚀 <b>SEÑAL DETECTADA - VENTA</b>
+                send(f"""🔔 <b>SEÑAL DETECTADA</b>
 💹 Activo: {pair}
-📈 Condición: {tipo}
+📌 Condición: {tipo}
 💪 Fuerza: {fuerza}/100
-📊 Dirección: 🔴 VENTA""")
+🟢 Tipo: COMPRA""")
 
                 status, trade_id = ejecutar_operacion(iq, BASE_AMOUNT, pair, signal, EXPIRATION)
                 if status:
                     DAILY_TRADES += 1
-                    send(f"✅ <b>OPERACIÓN ABIERTA</b> | ${BASE_AMOUNT:.2f} | Total: {DAILY_TRADES}/{MAX_DAILY_TRADES}")
+                    send(f"✅ <b>OPERACIÓN ABIERTA</b> | Monto: ${BASE_AMOUNT:.2f} | Total: {DAILY_TRADES}/{MAX_DAILY_TRADES}")
                     time.sleep(65)
                     try:
                         res = iq.check_win_v4(trade_id)
                         if res is None:
-                            pass
+                            send("ℹ️ Resultado pendiente de verificación")
                         elif res < 0:
                             LOSS_STREAK += 1
                             LAST_LOSS = time.time()
@@ -296,11 +299,11 @@ def main():
                 else:
                     send(f"❌ No se pudo ejecutar en {pair}")
 
-            time.sleep(0.015)
+            time.sleep(0.02)
 
         except Exception as e:
             send(f"💥 Error: {str(e)} | Reiniciando...")
-            logging.exception("Error en bucle")
+            logging.exception("Error en bucle principal")
             time.sleep(2)
             try:
                 iq = connect()
@@ -313,3 +316,4 @@ if __name__ == "__main__":
     if missing:
         print(f"❌ Faltan variables: {', '.join(missing)}")
         sys.exit(1)
+    main()
