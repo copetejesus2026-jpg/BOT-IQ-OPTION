@@ -12,7 +12,7 @@ def get_reversal_signal(df, tolerancia_nivel=0.0022, ventana_niveles=5):
     df['ema13'] = df['close'].ewm(span=13, adjust=False).mean()
     df['ema21'] = df['close'].ewm(span=21, adjust=False).mean()
 
-    # Cálculo RSI
+    # RSI
     delta = df['close'].diff()
     ganancia = delta.where(delta > 0, 0.0)
     perdida = -delta.where(delta < 0, 0.0)
@@ -50,15 +50,15 @@ def get_reversal_signal(df, tolerancia_nivel=0.0022, ventana_niveles=5):
 
     en_soporte = any(abs(cierre - s) / s <= tolerancia_nivel for s in soportes)
 
-    # Solo compra por sobreventa + reversión
+    # Señal solo compra por sobreventa
     senal = None
     fuerza = 0
-    tipo_nivel = ""
+    tipo = ""
 
     if rsi_val < 25:
         if en_soporte and macd_val >= senal_macd_val and cierre > apertura:
             senal = "call"
-            tipo_nivel = "REVERSIÓN SOBREVENTA"
+            tipo = "REVERSIÓN SOBREVENTA"
             fuerza = 50
             if rsi_val < 20:
                 fuerza += 15
@@ -69,8 +69,7 @@ def get_reversal_signal(df, tolerancia_nivel=0.0022, ventana_niveles=5):
             if df['close'].iloc[-2] < df['open'].iloc[-2]:
                 fuerza += 10
 
-    # Solo devuelve si cumple la fuerza mínima
     if senal is not None and fuerza >= 75:
-        return (senal, fuerza, tipo_nivel)
+        return (senal, fuerza, tipo)
 
     return None
