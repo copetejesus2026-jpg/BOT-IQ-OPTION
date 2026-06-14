@@ -16,35 +16,41 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# ⚙️ CONFIGURACIÓN
+# ⚙️ CONFIGURACIÓN GENERAL
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# Expiración exacta 1 minuto
 EXPIRATION = 1
-BASE_AMOUNT = 250
+BASE_AMOUNT = 500
 TIMEFRAME_M1 = 60
 
-PAIRS = [
+# ✅ TODOS LOS PARES OTC DISPONIBLES
+PARES_TODOS_OTC = [
     "EURUSD-OTC", "GBPUSD-OTC", "EURGBP-OTC", "EURJPY-OTC", "GBPJPY-OTC",
     "AUDUSD-OTC", "USDCAD-OTC", "USDCHF-OTC", "NZDUSD-OTC",
-    "EURCAD-OTC", "GBPCAD-OTC", "AUDJPY-OTC", "CADJPY-OTC"
+    "EURCAD-OTC", "GBPCAD-OTC", "AUDJPY-OTC", "CADJPY-OTC",
+    "GBPAUD-OTC", "AUDCAD-OTC", "AUDCHF-OTC", "EURAUD-OTC",
+    "NZDJPY-OTC", "USDJPY-OTC", "GBPCHF-OTC", "EURCHF-OTC"
 ]
 
-MAX_DAILY_TRADES = 22
+MAX_DAILY_TRADES = 35
 MAX_LOSS_STREAK = 5
 PAUSE_TIME = 900
-MAX_RECONNECT_ATTEMPTS = 10
-RECONNECT_DELAY = 3
+MAX_RECONNECT_ATTEMPTS = 15
+RECONNECT_DELAY = 2
 
+# Reglas de señal
 FUERZA_MINIMA = 75
 TOLERANCIA_NIVEL = 0.0022
 VENTANA_NIVELES = 5
 
+# Ejecución
 TIEMPO_ESPERA_EJECUCION = 0.02
-REINTENTOS_EJECUCION = 5          # Más reintentos
-TIEMPO_MINIMO_VALIDO = 58          # Más margen de seguridad
+REINTENTOS_EJECUCION = 5
+TIEMPO_MINIMO_VALIDO = 58
 
 # Variables globales
 DAILY_TRADES = 0
@@ -95,7 +101,7 @@ def listen_commands():
                 if text == "/start":
                     if not BOT_RUNNING:
                         BOT_RUNNING = True
-                        send("✅ <b>BOT INICIADO</b>\nEjecución EXACTA en vela siguiente\nSolo fuerza ≥ 75 %")
+                        send("✅ <b>BOT INICIADO</b>\nTodos los pares OTC\nVencimiento: 1 minuto\nEjecución en vela siguiente\nFuerza ≥ 75 %")
                     else:
                         send("ℹ️ El bot ya está activo.")
                 elif text == "/stop":
@@ -155,13 +161,13 @@ def connect():
         attempts += 1
         time.sleep(RECONNECT_DELAY)
     
-    send("💥 Reintentando en 60s...")
+    send("💥 Reintentando en 60 s...")
     time.sleep(60)
     return connect()
 
 # 📥 OBTENER DATOS
-def get_df(iq, pair, retries=3):
-    for _ in range(retries):
+def get_df(iq, par, reintentos=3):
+    for _ in range(reintentos):
         try:
             if not iq or not iq.check_connect():
                 iq = connect()
@@ -169,18 +175,18 @@ def get_df(iq, pair, retries=3):
                     time.sleep(1)
                     continue
 
-            data = iq.get_candles(pair, TIMEFRAME_M1, 30, time.time())
-            if not data or len(data) < 10:
+            datos = iq.get_candles(par, TIMEFRAME_M1, 35, time.time())
+            if not datos or len(datos) < 10:
                 time.sleep(0.2)
                 continue
 
-            df = pd.DataFrame(data)
+            df = pd.DataFrame(datos)
             df.rename(columns={"max": "high", "min": "low"}, inplace=True)
             df[["open", "close", "high", "low", "volume"]] = df[["open", "close", "high", "low", "volume"]].astype(float)
             return df
 
         except Exception as e:
-            logging.error(f"Datos {pair}: {str(e)}")
+            logging.error(f"Datos {par}: {str(e)}")
             time.sleep(0.3)
     
     return None
@@ -201,11 +207,11 @@ def ejecutar_operacion(iq, monto, par, direccion, vencimiento):
                 continue
             
             time.sleep(TIEMPO_ESPERA_EJECUCION)
-            status, trade_id = iq.buy(monto, par, direccion, vencimiento)
+            estado, id_operacion = iq.buy(monto, par, direccion, vencimiento)
             
-            if status and trade_id > 0:
+            if estado and id_operacion > 0:
                 logging.info(f"Ejecutado en {par}, intento {intento+1}")
-                return True, trade_id
+                return True, id_operacion
             
             if intento < REINTENTOS_EJECUCION:
                 time.sleep(0.15)
@@ -223,7 +229,7 @@ def main():
     threading.Thread(target=listen_commands, daemon=True).start()
 
     iq = connect()
-    send("ℹ️ <b>SISTEMA LISTO</b>\nEjecución en vela siguiente\nSolo fuerza ≥ 75 %\nEnvía /start para operar")
+    send("ℹ️ <b>SISTEMA LISTO</b>\nTodos los pares OTC\nVencimiento: 1 minuto\nEjecución en vela siguiente\nEnvía /start")
 
     while True:
         try:
@@ -247,7 +253,7 @@ def main():
             if LOSS_STREAK >= MAX_LOSS_STREAK:
                 restante = int(PAUSE_TIME - (time.time() - LAST_LOSS))
                 if restante > 0:
-                    send(f"⏸️ Pausa: {restante//60} min")
+                    send(f"⏸️ Pausa: {restante//60} min")
                     time.sleep(5)
                     continue
                 else:
@@ -255,79 +261,80 @@ def main():
                     LAST_TRADE = None
                     send("✅ Pausa finalizada.")
 
-            server_time = iq.get_server_timestamp()
-            sec = server_time % 60
-            current_candle = int(server_time // 60)
+            tiempo_servidor = iq.get_server_timestamp()
+            segundos = tiempo_servidor % 60
+            vela_actual = int(tiempo_servidor // 60)
 
-            # ✅ EJECUTAR SOLO UNA VEZ AL CAMBIAR LA VELA
-            if current_candle != ULTIMA_VELA_EJECUTADA:
-                ULTIMA_VELA_EJECUTADA = current_candle
+            # Ejecutar señal pendiente al inicio de vela
+            if vela_actual != ULTIMA_VELA_EJECUTADA:
+                ULTIMA_VELA_EJECUTADA = vela_actual
 
                 if SEÑAL_PENDIENTE is not None:
-                    pair, signal, fuerza, tipo_nivel = SEÑAL_PENDIENTE
+                    par, senal, fuerza, tipo = SEÑAL_PENDIENTE
                     SEÑAL_PENDIENTE = None
 
-                    if (pair, signal) == LAST_TRADE:
+                    if (par, senal) == LAST_TRADE:
                         send("ℹ️ Señal repetida, se omite")
                         continue
-                    LAST_TRADE = (pair, signal)
+                    LAST_TRADE = (par, senal)
 
                     send(f"""🚀 <b>EJECUTANDO ENTRADA</b>
-💹 Activo: {pair}
-📍 Zona: {tipo_nivel.upper()}
+💹 Activo: {par}
+📍 Condición: {tipo.upper()}
 💪 Fuerza: {fuerza}/100
-📊 Tipo: {'🟢 COMPRA' if signal == 'call' else '🔴 VENTA'}
+📊 Tipo: {'🟢 COMPRA' if senal == 'call' else '🔴 VENTA'}
 ⏱️ Vencimiento: 1 minuto""")
 
-                    status, trade_id = ejecutar_operacion(iq, BASE_AMOUNT, pair, signal, EXPIRATION)
+                    estado, id_operacion = ejecutar_operacion(iq, BASE_AMOUNT, par, senal, EXPIRATION)
 
-                    if status:
+                    if estado:
                         DAILY_TRADES += 1
                         send(f"✅ <b>OPERACIÓN ABIERTA</b> | Monto: ${BASE_AMOUNT:.2f} | Total: {DAILY_TRADES}/{MAX_DAILY_TRADES}")
 
                         time.sleep(65)
                         try:
-                            res = iq.check_win_v4(trade_id)
-                            if res is None:
+                            resultado = iq.check_win_v4(id_operacion)
+                            if resultado is None:
                                 send("ℹ️ Resultado pendiente")
                                 continue
 
-                            if res < 0:
+                            if resultado < 0:
                                 LOSS_STREAK += 1
                                 LAST_LOSS = time.time()
-                                send(f"❌ <b>PERDIDA</b> | -${abs(res):.2f}\nRacha: {LOSS_STREAK}/{MAX_LOSS_STREAK}")
+                                send(f"❌ <b>PERDIDA</b> | -${abs(resultado):.2f}\nRacha: {LOSS_STREAK}/{MAX_LOSS_STREAK}")
                             else:
                                 LOSS_STREAK = 0
-                                send(f"✅ <b>GANADA</b> | +${res:.2f}\n_________________________")
+                                send(f"✅ <b>GANADA</b> | +${resultado:.2f}\n_________________________")
 
                         except Exception as e:
                             send(f"⚠️ Verificación: {str(e)}")
                     else:
-                        send(f"❌ No se pudo ejecutar en {pair} tras reintentos")
+                        send(f"❌ No se pudo ejecutar en {par} tras reintentos")
 
-            # ✅ BUSCAR Y GUARDAR SEÑAL AL FINAL DE LA VELA
-            if 10 <= sec <= 58:
+            # Buscar señales en TODOS los pares
+            if 10 <= segundos <= 58:
                 mejor_opcion = None
                 mayor_fuerza = 0
 
-                for pair in PAIRS:
-                    df = get_df(iq, pair)
+                for par in PARES_TODOS_OTC:
+                    df = get_df(iq, par)
                     if df is None:
                         continue
 
-                    resultado = get_reversal_signal(df, TOLERANCIA_NIVEL, VENTANA_NIVELES)
-                    if resultado is not None:
-                        signal, fuerza, tipo_nivel = resultado
+                    resultado_señal = get_reversal_signal(df, TOLERANCIA_NIVEL, VENTANA_NIVELES)
+                    if resultado_señal is not None:
+                        senal, fuerza, tipo = resultado_señal
                         if fuerza >= FUERZA_MINIMA and fuerza > mayor_fuerza:
                             mayor_fuerza = fuerza
-                            mejor_opcion = (pair, signal, fuerza, tipo_nivel)
+                            mejor_opcion = (par, senal, fuerza, tipo)
 
-                if 55 <= sec <= 58 and mejor_opcion is not None:
+                # Guardar la mejor señal al final del minuto
+                if 55 <= segundos <= 58 and mejor_opcion is not None:
                     SEÑAL_PENDIENTE = mejor_opcion
-                    pair, signal, fuerza, tipo_nivel = mejor_opcion
+                    par, senal, fuerza, tipo = mejor_opcion
                     send(f"""🔍 <b>SEÑAL DETECTADA</b>
-💹 Activo: {pair}
-📍 Nivel: {tipo_nivel.upper()}
+💹 Activo: {par}
+📍 Nivel: {tipo.upper()}
 💪 Fuerza: {fuerza}/100
 ⏳ ✅ EJECUCIÓN: SIGUIENTE VELA""")
 
@@ -335,7 +342,7 @@ def main():
 
         except Exception as e:
             send(f"💥 Error: {str(e)} | Reiniciando...")
-            logging.exception("Error en bucle")
+            logging.exception("Error en bucle principal")
             time.sleep(2)
             try:
                 iq = connect()
@@ -343,9 +350,9 @@ def main():
                 pass
 
 if __name__ == "__main__":
-    required = ["IQ_EMAIL", "IQ_PASSWORD", "TELEGRAM_TOKEN", "TELEGRAM_CHAT_ID"]
-    missing = [v for v in required if not os.getenv(v)]
-    if missing:
-        print(f"❌ Faltan variables: {', '.join(missing)}")
+    requeridas = ["IQ_EMAIL", "IQ_PASSWORD", "TELEGRAM_TOKEN", "TELEGRAM_CHAT_ID"]
+    faltantes = [var for var in requeridas if not os.getenv(var)]
+    if faltantes:
+        print(f"❌ Faltan variables: {', '.join(faltantes)}")
         sys.exit(1)
     main()
