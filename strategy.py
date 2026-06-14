@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 
-def get_reversal_signal(df, tolerancia_nivel=0.0030, ventana_niveles=5):
-    if len(df) < ventana_niveles + 6:
+def get_reversal_signal(df, tolerancia_nivel=0.0025, ventana_niveles=5):
+    if len(df) < ventana_niveles + 8:
         return None
 
     df = df.copy()
@@ -25,7 +25,7 @@ def get_reversal_signal(df, tolerancia_nivel=0.0030, ventana_niveles=5):
     df['macd'] = df['ema13'] - df['ema21']
     df['senal_macd'] = df['macd'].ewm(span=4, adjust=False).mean()
 
-    # Detección de soportes
+    # Soportes
     def detectar_soportes(datos, ventana):
         soportes = []
         total = len(datos)
@@ -44,13 +44,13 @@ def get_reversal_signal(df, tolerancia_nivel=0.0030, ventana_niveles=5):
         senal_macd_val = float(df['senal_macd'].iloc[-1])
         rsi_val = float(df['rsi'].iloc[-1])
         volumen = float(df['volume'].iloc[-1])
-        vol_prom = float(df['volume'].iloc[-5:-1].mean()) if len(df) >= 6 else max(volumen, 1.0)
+        vol_prom = float(df['volume'].iloc[-6:-1].mean()) if len(df) >= 7 else max(volumen, 1.0)
     except Exception:
         return None
 
     en_soporte = any(abs(cierre - s) / s <= tolerancia_nivel for s in soportes)
 
-    # ✅ SOLO COMPRA - SIN CONFUSIONES
+    # Solo compra, fuerza ≥ 75
     senal = None
     fuerza = 0
     tipo = ""
@@ -62,13 +62,14 @@ def get_reversal_signal(df, tolerancia_nivel=0.0030, ventana_niveles=5):
             fuerza = 50
             if rsi_val < 20:
                 fuerza += 15
-            if volumen >= vol_prom * 0.4:
+            if volumen >= vol_prom * 0.5:
                 fuerza += 10
             if df['ema8'].iloc[-1] > df['ema21'].iloc[-1]:
                 fuerza += 10
+            if df['close'].iloc[-2] < df['open'].iloc[-2]:
+                fuerza += 10
 
-    if senal is not None:
-        fuerza = max(40, min(fuerza, 100))
+    if senal is not None and fuerza >= 75:
         return (senal, fuerza, tipo)
 
     return None
