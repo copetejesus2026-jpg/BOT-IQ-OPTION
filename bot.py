@@ -16,15 +16,13 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# ==========================================
 # ⚙️ CONFIGURACIÓN
-# ==========================================
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-EXPIRATION = 2
+EXPIRATION = 3
 BASE_AMOUNT = 25
 TIMEFRAME_M1 = 60
 
@@ -57,9 +55,7 @@ LAST_TRADE = None
 BOT_RUNNING = False
 SEÑAL_PENDIENTE = None
 
-# ====================================================
 # 📱 FUNCIONES TELEGRAM
-# ====================================================
 def send(msg):
     if TOKEN and CHAT_ID:
         try:
@@ -112,9 +108,7 @@ def listen_commands():
             logging.error(f"Comandos: {str(e)}")
             time.sleep(1)
 
-# ====================================================
 # 🔄 REINICIO DIARIO
-# ====================================================
 def reset_day():
     global DAILY_TRADES, CURRENT_DAY, LOSS_STREAK, LAST_TRADE, SEÑAL_PENDIENTE
     today = datetime.now(timezone.utc).day
@@ -127,9 +121,7 @@ def reset_day():
         if BOT_RUNNING:
             send("🔄 <b>NUEVO DÍA</b> | Contadores reiniciados.")
 
-# ====================================================
 # 🔌 CONEXIÓN IQ OPTION
-# ====================================================
 def connect():
     attempts = 0
     while attempts < MAX_RECONNECT_ATTEMPTS:
@@ -165,9 +157,7 @@ def connect():
     time.sleep(60)
     return connect()
 
-# ====================================================
 # 📥 OBTENER DATOS
-# ====================================================
 def get_df(iq, pair, retries=2):
     for _ in range(retries):
         try:
@@ -193,9 +183,7 @@ def get_df(iq, pair, retries=2):
     
     return None
 
-# ====================================================
 # 🚀 EJECUTAR OPERACIÓN
-# ====================================================
 def ejecutar_operacion(iq, monto, par, direccion, vencimiento):
     for intento in range(REINTENTOS_EJECUCION + 1):
         try:
@@ -224,9 +212,7 @@ def ejecutar_operacion(iq, monto, par, direccion, vencimiento):
     
     return False, None
 
-# ====================================================
 # 🧠 BUCLE PRINCIPAL
-# ====================================================
 def main():
     global BOT_RUNNING, LOSS_STREAK, LAST_LOSS, DAILY_TRADES, LAST_TRADE, SEÑAL_PENDIENTE
     threading.Thread(target=listen_commands, daemon=True).start()
@@ -269,7 +255,7 @@ def main():
             sec = server_time % 60
             current_candle = int(server_time // 60)
 
-            # Ejecutar señal pendiente al inicio de vela nueva
+            # Ejecutar señal pendiente
             if current_candle != last_candle:
                 last_candle = current_candle
                 
@@ -313,7 +299,7 @@ def main():
                     else:
                         send(f"❌ No se pudo ejecutar en {pair}")
 
-            # Buscar señales y guardar para vela siguiente
+            # Buscar señales
             if 10 <= sec <= 57:
                 mejor_opcion = None
                 mayor_fuerza = 0
