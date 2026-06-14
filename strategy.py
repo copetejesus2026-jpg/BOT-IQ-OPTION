@@ -25,14 +25,13 @@ def get_reversal_signal(df, tolerancia_nivel=0.0020, ventana_niveles=6, confirma
     df['macd'] = df['ema13'] - df['ema21']
     df['senal_macd'] = df['macd'].ewm(span=4, adjust=False).mean()
 
-    # Detección de soportes + verificación de rotura
+    # Soportes sin rotura
     def detectar_soportes_activos(datos, ventana):
         soportes = []
         total = len(datos)
         for i in range(ventana, total - ventana):
             minimo = datos['low'].iloc[i-ventana:i+ventana+1].min()
             if abs(datos['low'].iloc[i] - minimo) / minimo <= 0.0018:
-                # Verificar que no se haya roto en últimas 3 velas
                 if all(datos['low'].iloc[-3:] >= minimo * 0.9995):
                     soportes.append(round(minimo, 5))
         return sorted(list(set(soportes)))
@@ -48,21 +47,18 @@ def get_reversal_signal(df, tolerancia_nivel=0.0020, ventana_niveles=6, confirma
         volumen = float(df['volume'].iloc[-1])
         vol_prom = float(df['volume'].iloc[-6:-1].mean()) if len(df) >= 7 else max(volumen, 1.0)
         ema21_actual = float(df['ema21'].iloc[-1])
-        # Verificar tendencia últimas 2 velas
         tendencia_bajista = (df['close'].iloc[-2] < df['open'].iloc[-2]) and (df['close'].iloc[-3] < df['open'].iloc[-3])
     except Exception:
         return None
 
     en_soporte = any(abs(cierre - s) / s <= tolerancia_nivel for s in soportes)
 
-    # Condiciones estrictas para compra
     senal = None
     fuerza = 0
     tipo = ""
 
     if rsi_val < 25:
         if en_soporte and macd_val >= senal_macd_val and cierre > apertura:
-            # Evitar contra tendencia bajista fuerte
             if confirmar_tendencia and tendencia_bajista:
                 return None
             if confirmar_tendencia and cierre < ema21_actual:
