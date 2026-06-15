@@ -62,12 +62,14 @@ def get_reversal_signal(df):
     tendencia_alcista = df['ema5'].iloc[-1] > df['ema8'].iloc[-1] > df['ema21'].iloc[-1]
     tendencia_bajista = df['ema5'].iloc[-1] < df['ema8'].iloc[-1] < df['ema21'].iloc[-1]
 
-    # CALL
-    if tendencia_alcista and c1["close"] > c2["close"]:
-        return ("call", 98, "SNIPER TREND")
+    # 🔁 INVERTIDO
 
-    # PUT
+    # ERA CALL → AHORA PUT
+    if tendencia_alcista and c1["close"] > c2["close"]:
+        return ("put", 98, "SNIPER CONTRA TENDENCIA")
+
+    # ERA PUT → AHORA CALL
     if tendencia_bajista and c1["close"] < c2["close"]:
-        return ("put", 98, "SNIPER TREND")
+        return ("call", 98, "SNIPER CONTRA TENDENCIA")
 
     return None
