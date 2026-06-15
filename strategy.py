@@ -18,15 +18,55 @@ def bearish(c):
     return c["close"] < c["open"]
 
 # =========================================================
+# DETECCIÓN DE SOPORTES
+# =========================================================
+
+def detectar_soportes(datos, ventana=5):
+
+    soportes = []
+
+    for i in range(ventana, len(datos) - ventana):
+
+        minimo = datos['low'].iloc[i-ventana:i+ventana+1].min()
+
+        if abs(datos['low'].iloc[i] - minimo) / minimo <= 0.0018:
+
+            soportes.append(round(minimo, 5))
+
+    return sorted(list(set(soportes)))
+
+# =========================================================
+# DETECCIÓN DE RESISTENCIAS
+# =========================================================
+
+def detectar_resistencias(datos, ventana=5):
+
+    resistencias = []
+
+    for i in range(ventana, len(datos) - ventana):
+
+        maximo = datos['high'].iloc[i-ventana:i+ventana+1].max()
+
+        if abs(datos['high'].iloc[i] - maximo) / maximo <= 0.0018:
+
+            resistencias.append(round(maximo, 5))
+
+    return sorted(list(set(resistencias)))
+
+# =========================================================
 # ESTRATEGIA PRINCIPAL
 # =========================================================
 
 def get_reversal_signal(
     df,
-    tolerancia_nivel=0.0020,
-    ventana_niveles=6,
+    tolerancia_nivel=0.0025,
+    ventana_niveles=5,
     confirmar_tendencia=True
 ):
+
+    # =====================================================
+    # VALIDACIÓN
+    # =====================================================
 
     if len(df) < 35:
         return None
@@ -37,6 +77,7 @@ def get_reversal_signal(
     # EMAS
     # =====================================================
 
+    df['ema5'] = df['close'].ewm(span=5, adjust=False).mean()
     df['ema8'] = df['close'].ewm(span=8, adjust=False).mean()
     df['ema13'] = df['close'].ewm(span=13, adjust=False).mean()
     df['ema21'] = df['close'].ewm(span=21, adjust=False).mean()
@@ -63,33 +104,24 @@ def get_reversal_signal(
     # MACD
     # =====================================================
 
-    df['macd'] = df['ema13'] - df['ema21']
+    df['macd'] = df['ema8'] - df['ema21']
     df['signal_macd'] = df['macd'].ewm(span=4, adjust=False).mean()
 
     # =====================================================
-    # SOPORTES
+    # VOLUMEN
     # =====================================================
 
-    def detectar_soportes(datos, ventana):
+    df['vol_media'] = df['volume'].rolling(5).mean()
 
-        soportes = []
-
-        for i in range(ventana, len(datos) - ventana):
-
-            minimo = datos['low'].iloc[i-ventana:i+ventana+1].min()
-
-            if abs(datos['low'].iloc[i] - minimo) / minimo <= 0.0015:
-
-                if all(datos['low'].iloc[-3:] >= minimo * 0.999):
-
-                    soportes.append(round(minimo, 5))
-
-        return sorted(list(set(soportes)))
+    # =====================================================
+    # SOPORTES Y RESISTENCIAS
+    # =====================================================
 
     soportes = detectar_soportes(df, ventana_niveles)
+    resistencias = detectar_resistencias(df, ventana_niveles)
 
     # =====================================================
-    # DATOS ACTUALES
+    # VELAS ACTUALES
     # =====================================================
 
     try:
@@ -104,33 +136,24 @@ def get_reversal_signal(
         high = float(c1["high"])
         low = float(c1["low"])
 
+        ema5 = float(c1["ema5"])
+        ema8 = float(c1["ema8"])
+        ema13 = float(c1["ema13"])
+        ema21 = float(c1["ema21"])
+
         rsi = float(c1["rsi"])
 
         macd = float(c1["macd"])
         signal_macd = float(c1["signal_macd"])
 
-        ema8 = float(c1["ema8"])
-        ema13 = float(c1["ema13"])
-        ema21 = float(c1["ema21"])
-
         volumen = float(c1["volume"])
-
-        vol_prom = float(df["volume"].iloc[-6:-1].mean())
+        vol_media = float(c1["vol_media"])
 
     except:
         return None
 
     # =====================================================
-    # DETECCIÓN DE ESTRUCTURA
-    # =====================================================
-
-    higher_low = c1["low"] > c2["low"]
-    higher_high = c1["high"] > c2["high"]
-
-    estructura_alcista = higher_low and higher_high
-
-    # =====================================================
-    # SOPORTE
+    # SOPORTE / RESISTENCIA
     # =====================================================
 
     en_soporte = any(
@@ -138,107 +161,190 @@ def get_reversal_signal(
         for s in soportes
     )
 
+    en_resistencia = any(
+        abs(cierre - r) / r <= tolerancia_nivel
+        for r in resistencias
+    )
+
+    # =====================================================
+    # FUERZA VELA
+    # =====================================================
+
+    fuerza_vela_alcista = (
+        bullish(c1)
+        and body(c1) >= range_c(c1) * 0.55
+    )
+
+    fuerza_vela_bajista = (
+        bearish(c1)
+        and body(c1) >= range_c(c1) * 0.55
+    )
+
     # =====================================================
     # MOMENTUM
     # =====================================================
 
-    momentum_fuerte = (
-        body(c1) > body(c2)
-        and bullish(c1)
-        and cierre > c2["close"]
+    momentum_alcista = (
+        bullish(c1)
+        and c1["close"] > c2["close"]
+        and body(c1) >= body(c2) * 0.9
+    )
+
+    momentum_bajista = (
+        bearish(c1)
+        and c1["close"] < c2["close"]
+        and body(c1) >= body(c2) * 0.9
     )
 
     # =====================================================
-    # FUERZA DE VELA
+    # ESTRUCTURA
     # =====================================================
 
-    fuerza_vela = (
-        body(c1) >= range_c(c1) * 0.60
+    estructura_alcista = (
+        c1["low"] > c2["low"]
+        and c1["high"] > c2["high"]
+    )
+
+    estructura_bajista = (
+        c1["high"] < c2["high"]
+        and c1["low"] < c2["low"]
     )
 
     # =====================================================
     # ACELERACIÓN
     # =====================================================
 
-    aceleracion = (
-        body(c1) > body(c2) * 1.2
+    aceleracion_alcista = (
+        body(c1) > body(c2) * 1.10
+    )
+
+    aceleracion_bajista = (
+        body(c1) > body(c2) * 1.10
     )
 
     # =====================================================
-    # FILTRO ANTI RANGO
+    # FILTRO ANTI-RANGO (MÁS FLEXIBLE)
     # =====================================================
 
-    rango_pequeno = (
-        abs(df["close"].iloc[-5] - cierre) / cierre < 0.0015
-    )
+    rango = abs(df["close"].iloc[-5] - cierre) / cierre
 
-    if rango_pequeno:
+    if rango < 0.0007:
         return None
 
     # =====================================================
-    # FILTRO CONTRA TENDENCIA
+    # FILTRO DE TENDENCIA
     # =====================================================
 
-    if confirmar_tendencia:
+    tendencia_alcista = (
+        ema5 > ema8 > ema13
+    )
 
-        if cierre < ema21:
-            return None
-
-        if ema8 < ema21:
-            return None
+    tendencia_bajista = (
+        ema5 < ema8 < ema13
+    )
 
     # =====================================================
-    # DETECCIÓN REVERSIÓN + CONTINUACIÓN
+    # DETECCIÓN CALL
     # =====================================================
 
-    fuerza = 0
-    tipo = ""
-    senal = None
+    call_fuerza = 0
 
     if (
-        rsi < 38
-        and macd >= signal_macd
-        and bullish(c1)
-        and momentum_fuerte
-        and fuerza_vela
-        and aceleracion
-        and estructura_alcista
+        macd >= signal_macd
+        and fuerza_vela_alcista
+        and momentum_alcista
     ):
 
-        senal = "call"
+        call_fuerza += 35
 
-        tipo = "MOMENTUM + ESTRUCTURA + ACELERACIÓN"
+        if estructura_alcista:
+            call_fuerza += 10
 
-        fuerza = 50
+        if aceleracion_alcista:
+            call_fuerza += 10
+
+        if tendencia_alcista:
+            call_fuerza += 15
+
+        if cierre > ema21:
+            call_fuerza += 10
+
+        if volumen >= vol_media * 0.8:
+            call_fuerza += 10
+
+        if rsi < 35:
+            call_fuerza += 10
 
         if en_soporte:
-            fuerza += 10
-
-        if rsi < 30:
-            fuerza += 10
-
-        if volumen >= vol_prom:
-            fuerza += 10
-
-        if ema8 > ema13 > ema21:
-            fuerza += 15
+            call_fuerza += 8
 
         if cierre > c2["high"]:
-            fuerza += 15
-
-        if body(c1) > range_c(c1) * 0.75:
-            fuerza += 10
+            call_fuerza += 12
 
     # =====================================================
-    # VALIDACIÓN FINAL
+    # DETECCIÓN PUT
     # =====================================================
 
-    if senal and fuerza >= 80:
+    put_fuerza = 0
+
+    if (
+        macd <= signal_macd
+        and fuerza_vela_bajista
+        and momentum_bajista
+    ):
+
+        put_fuerza += 35
+
+        if estructura_bajista:
+            put_fuerza += 10
+
+        if aceleracion_bajista:
+            put_fuerza += 10
+
+        if tendencia_bajista:
+            put_fuerza += 15
+
+        if cierre < ema21:
+            put_fuerza += 10
+
+        if volumen >= vol_media * 0.8:
+            put_fuerza += 10
+
+        if rsi > 65:
+            put_fuerza += 10
+
+        if en_resistencia:
+            put_fuerza += 8
+
+        if cierre < c2["low"]:
+            put_fuerza += 12
+
+    # =====================================================
+    # ENTRADA CALL
+    # =====================================================
+
+    if call_fuerza >= 70:
 
         return (
-            senal,
-            min(fuerza, 100),
-            tipo
+            "call",
+            min(call_fuerza, 100),
+            "CALL MOMENTUM + ESTRUCTURA"
         )
+
+    # =====================================================
+    # ENTRADA PUT
+    # =====================================================
+
+    if put_fuerza >= 70:
+
+        return (
+            "put",
+            min(put_fuerza, 100),
+            "PUT MOMENTUM + ESTRUCTURA"
+        )
+
+    # =====================================================
+    # SIN ENTRADA
+    # =====================================================
 
     return None
