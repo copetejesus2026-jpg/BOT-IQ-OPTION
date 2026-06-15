@@ -18,7 +18,7 @@ def bearish(c):
     return c["close"] < c["open"]
 
 # =========================================================
-# DETECCIÓN DE SOPORTES
+# SOPORTES
 # =========================================================
 
 def detectar_soportes(datos, ventana=5):
@@ -36,7 +36,7 @@ def detectar_soportes(datos, ventana=5):
     return sorted(list(set(soportes)))
 
 # =========================================================
-# DETECCIÓN DE RESISTENCIAS
+# RESISTENCIAS
 # =========================================================
 
 def detectar_resistencias(datos, ventana=5):
@@ -54,6 +54,23 @@ def detectar_resistencias(datos, ventana=5):
     return sorted(list(set(resistencias)))
 
 # =========================================================
+# DETECCIÓN DE COMPRESIÓN
+# =========================================================
+
+def detectar_compresion(df):
+
+    ultimas = df.iloc[-5:]
+
+    promedio_rango = ultimas.apply(
+        lambda x: range_c(x),
+        axis=1
+    ).mean()
+
+    rango_actual = range_c(df.iloc[-1])
+
+    return rango_actual < promedio_rango * 0.8
+
+# =========================================================
 # ESTRATEGIA PRINCIPAL
 # =========================================================
 
@@ -68,7 +85,7 @@ def get_reversal_signal(
     # VALIDACIÓN
     # =====================================================
 
-    if len(df) < 35:
+    if len(df) < 40:
         return None
 
     df = df.copy()
@@ -91,8 +108,8 @@ def get_reversal_signal(
     gain = delta.where(delta > 0, 0.0)
     loss = -delta.where(delta < 0, 0.0)
 
-    avg_gain = gain.rolling(window=5, min_periods=1).mean()
-    avg_loss = loss.rolling(window=5, min_periods=1).mean()
+    avg_gain = gain.rolling(window=5).mean()
+    avg_loss = loss.rolling(window=5).mean()
 
     avg_loss = avg_loss.replace(0, 0.001)
 
@@ -121,7 +138,7 @@ def get_reversal_signal(
     resistencias = detectar_resistencias(df, ventana_niveles)
 
     # =====================================================
-    # VELAS ACTUALES
+    # VELAS
     # =====================================================
 
     try:
@@ -129,12 +146,9 @@ def get_reversal_signal(
         c1 = df.iloc[-1]
         c2 = df.iloc[-2]
         c3 = df.iloc[-3]
+        c4 = df.iloc[-4]
 
         cierre = float(c1["close"])
-        apertura = float(c1["open"])
-
-        high = float(c1["high"])
-        low = float(c1["low"])
 
         ema5 = float(c1["ema5"])
         ema8 = float(c1["ema8"])
@@ -167,17 +181,31 @@ def get_reversal_signal(
     )
 
     # =====================================================
-    # FUERZA VELA
+    # FUERZA DE VELA
     # =====================================================
 
-    fuerza_vela_alcista = (
+    fuerza_alcista = (
         bullish(c1)
         and body(c1) >= range_c(c1) * 0.55
     )
 
-    fuerza_vela_bajista = (
+    fuerza_bajista = (
         bearish(c1)
         and body(c1) >= range_c(c1) * 0.55
+    )
+
+    # =====================================================
+    # VELA EXPLOSIVA
+    # =====================================================
+
+    vela_explosiva_alcista = (
+        bullish(c1)
+        and body(c1) > body(c2) * 1.5
+    )
+
+    vela_explosiva_bajista = (
+        bearish(c1)
+        and body(c1) > body(c2) * 1.5
     )
 
     # =====================================================
@@ -197,12 +225,40 @@ def get_reversal_signal(
     )
 
     # =====================================================
+    # RETROCESO DÉBIL
+    # =====================================================
+
+    retroceso_debil_alcista = (
+        bearish(c2)
+        and body(c2) < body(c3) * 0.7
+    )
+
+    retroceso_debil_bajista = (
+        bullish(c2)
+        and body(c2) < body(c3) * 0.7
+    )
+
+    # =====================================================
+    # ABSORCIÓN
+    # =====================================================
+
+    absorcion_alcista = (
+        c2["low"] < c3["low"]
+        and c2["close"] > c2["open"]
+    )
+
+    absorcion_bajista = (
+        c2["high"] > c3["high"]
+        and c2["close"] < c2["open"]
+    )
+
+    # =====================================================
     # ESTRUCTURA
     # =====================================================
 
     estructura_alcista = (
-        c1["low"] > c2["low"]
-        and c1["high"] > c2["high"]
+        c1["high"] > c2["high"]
+        and c1["low"] > c2["low"]
     )
 
     estructura_bajista = (
@@ -211,28 +267,7 @@ def get_reversal_signal(
     )
 
     # =====================================================
-    # ACELERACIÓN
-    # =====================================================
-
-    aceleracion_alcista = (
-        body(c1) > body(c2) * 1.10
-    )
-
-    aceleracion_bajista = (
-        body(c1) > body(c2) * 1.10
-    )
-
-    # =====================================================
-    # FILTRO ANTI-RANGO (MÁS FLEXIBLE)
-    # =====================================================
-
-    rango = abs(df["close"].iloc[-5] - cierre) / cierre
-
-    if rango < 0.0007:
-        return None
-
-    # =====================================================
-    # FILTRO DE TENDENCIA
+    # TENDENCIA
     # =====================================================
 
     tendencia_alcista = (
@@ -244,103 +279,136 @@ def get_reversal_signal(
     )
 
     # =====================================================
+    # COMPRESIÓN
+    # =====================================================
+
+    compresion = detectar_compresion(df)
+
+    # =====================================================
+    # FILTRO ANTI RANGO
+    # =====================================================
+
+    rango = abs(df["close"].iloc[-6] - cierre) / cierre
+
+    if rango < 0.0006:
+        return None
+
+    # =====================================================
     # DETECCIÓN CALL
     # =====================================================
 
-    call_fuerza = 0
+    call_score = 0
 
     if (
-        macd >= signal_macd
-        and fuerza_vela_alcista
+        macd >= signal_macd - 0.00002
         and momentum_alcista
+        and fuerza_alcista
     ):
 
-        call_fuerza += 35
+        call_score += 30
 
         if estructura_alcista:
-            call_fuerza += 10
-
-        if aceleracion_alcista:
-            call_fuerza += 10
+            call_score += 10
 
         if tendencia_alcista:
-            call_fuerza += 15
+            call_score += 15
 
         if cierre > ema21:
-            call_fuerza += 10
+            call_score += 10
 
         if volumen >= vol_media * 0.8:
-            call_fuerza += 10
+            call_score += 10
 
-        if rsi < 35:
-            call_fuerza += 10
+        if vela_explosiva_alcista:
+            call_score += 15
+
+        if retroceso_debil_alcista:
+            call_score += 10
+
+        if absorcion_alcista:
+            call_score += 10
+
+        if compresion:
+            call_score += 10
 
         if en_soporte:
-            call_fuerza += 8
+            call_score += 5
+
+        if rsi < 40:
+            call_score += 5
 
         if cierre > c2["high"]:
-            call_fuerza += 12
+            call_score += 10
 
     # =====================================================
     # DETECCIÓN PUT
     # =====================================================
 
-    put_fuerza = 0
+    put_score = 0
 
     if (
-        macd <= signal_macd
-        and fuerza_vela_bajista
+        macd <= signal_macd + 0.00002
         and momentum_bajista
+        and fuerza_bajista
     ):
 
-        put_fuerza += 35
+        put_score += 30
 
         if estructura_bajista:
-            put_fuerza += 10
-
-        if aceleracion_bajista:
-            put_fuerza += 10
+            put_score += 10
 
         if tendencia_bajista:
-            put_fuerza += 15
+            put_score += 15
 
         if cierre < ema21:
-            put_fuerza += 10
+            put_score += 10
 
         if volumen >= vol_media * 0.8:
-            put_fuerza += 10
+            put_score += 10
 
-        if rsi > 65:
-            put_fuerza += 10
+        if vela_explosiva_bajista:
+            put_score += 15
+
+        if retroceso_debil_bajista:
+            put_score += 10
+
+        if absorcion_bajista:
+            put_score += 10
+
+        if compresion:
+            put_score += 10
 
         if en_resistencia:
-            put_fuerza += 8
+            put_score += 5
+
+        if rsi > 60:
+            put_score += 5
 
         if cierre < c2["low"]:
-            put_fuerza += 12
+            put_score += 10
 
     # =====================================================
     # ENTRADA CALL
     # =====================================================
 
-    if call_fuerza >= 70:
+    if call_score >= 65:
 
         return (
             "call",
-            min(call_fuerza, 100),
-            "CALL MOMENTUM + ESTRUCTURA"
+            min(call_score, 100),
+            "CALL IMPULSO + CONTINUIDAD"
         )
 
     # =====================================================
     # ENTRADA PUT
     # =====================================================
 
-    if put_fuerza >= 70:
+    if put_score >= 65:
 
         return (
             "put",
-            min(put_fuerza, 100),
-            "PUT MOMENTUM + ESTRUCTURA"
+            min(put_score, 100),
+            "PUT IMPULSO + CONTINUIDAD"
         )
 
     # =====================================================
