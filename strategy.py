@@ -40,38 +40,34 @@ def get_reversal_signal(df):
 
     fuerza = body(c1) / (range_c(c1) + 1e-6)
 
-    # 🔥 SOLO VELAS EXTREMAS
+    # 🔥 SOLO VELAS FUERTES
     if fuerza < 0.8:
         return None
 
-    # ❌ Evitar manipulación (mechas grandes)
+    # ❌ evitar manipulación
     if upper_wick(c1) > body(c1) or lower_wick(c1) > body(c1):
         return None
 
-    # ❌ Evitar rango lateral
+    # ❌ evitar rango
     rango = abs(df["close"].iloc[-6] - df["close"].iloc[-1])
     if rango < 0.0005:
         return None
 
     rsi = c1["rsi"]
 
-    tendencia_alcista = df['ema5'].iloc[-1] > df['ema8'].iloc[-1] > df['ema21'].iloc[-1]
-    tendencia_bajista = df['ema5'].iloc[-1] < df['ema8'].iloc[-1] < df['ema21'].iloc[-1]
-
     # ❌ agotamiento
     if rsi > 70 or rsi < 30:
         return None
 
-    # ❌ vela contra tendencia previa fuerte
-    if body(c2) > body(c1) * 1.2:
-        return None
+    tendencia_alcista = df['ema5'].iloc[-1] > df['ema8'].iloc[-1] > df['ema21'].iloc[-1]
+    tendencia_bajista = df['ema5'].iloc[-1] < df['ema8'].iloc[-1] < df['ema21'].iloc[-1]
 
     # CALL
     if tendencia_alcista and c1["close"] > c2["close"]:
-        return ("call", 98, "PRO TREND")
+        return ("call", 98, "SNIPER TREND")
 
     # PUT
     if tendencia_bajista and c1["close"] < c2["close"]:
-        return ("put", 98, "PRO TREND")
+        return ("put", 98, "SNIPER TREND")
 
     return None
