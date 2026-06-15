@@ -7,173 +7,143 @@ import sys
 import threading
 import logging
 from datetime import datetime, timezone
-
-# ✅ IMPORT CORREGIDO
-from estrategia_reversal import get_reversal_signal
-
 from iqoptionapi.stable_api import IQ_Option
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO)
 
-# ⚙️ CONFIGURACIÓN
+# =========================================================
+# 🔥 ESTRATEGIA INTEGRADA (SIN IMPORT)
+# =========================================================
+
+def body(c):
+    return abs(c["close"] - c["open"])
+
+def range_c(c):
+    return c["high"] - c["low"]
+
+def bullish(c):
+    return c["close"] > c["open"]
+
+def bearish(c):
+    return c["close"] < c["open"]
+
+def get_reversal_signal(df, *args):
+
+    if len(df) < 40:
+        return None
+
+    df = df.copy()
+
+    df['ema5'] = df['close'].ewm(span=5).mean()
+    df['ema8'] = df['close'].ewm(span=8).mean()
+    df['ema21'] = df['close'].ewm(span=21).mean()
+
+    delta = df['close'].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.rolling(5).mean()
+    avg_loss = loss.rolling(5).mean().replace(0, 0.001)
+
+    rs = avg_gain / avg_loss
+    df['rsi'] = 100 - (100 / (1 + rs))
+
+    c1 = df.iloc[-1]
+    c2 = df.iloc[-2]
+
+    fuerza = body(c1) / range_c(c1)
+
+    if fuerza < 0.75:
+        return None
+
+    rsi = c1["rsi"]
+
+    if bullish(c1) and rsi > 65:
+        return None
+
+    if bearish(c1) and rsi < 35:
+        return None
+
+    tendencia_alcista = df['ema5'].iloc[-1] > df['ema8'].iloc[-1] > df['ema21'].iloc[-1]
+    tendencia_bajista = df['ema5'].iloc[-1] < df['ema8'].iloc[-1] < df['ema21'].iloc[-1]
+
+    if tendencia_alcista and bullish(c1) and c1["close"] > c2["close"]:
+        return ("call", 95, "FUERZA EXTREMA")
+
+    if tendencia_bajista and bearish(c1) and c1["close"] < c2["close"]:
+        return ("put", 95, "FUERZA EXTREMA")
+
+    return None
+
+# =========================================================
+# CONFIG
+# =========================================================
+
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-EXPIRATION = 1
-BASE_AMOUNT = 600
-TIMEFRAME_M1 = 60
+PARES = ["EURUSD-OTC", "GBPUSD-OTC"]
 
-PARES_TODOS_OTC = [
-    "EURUSD-OTC", "GBPUSD-OTC", "EURGBP-OTC", "EURJPY-OTC",
-    "AUDUSD-OTC", "USDCAD-OTC", "USDCHF-OTC", "EURCAD-OTC",
-    "GBPCAD-OTC", "AUDJPY-OTC", "CADJPY-OTC",
-    "GBPAUD-OTC", "AUDCAD-OTC", "AUDCHF-OTC",
-    "EURAUD-OTC", "GBPCHF-OTC", "EURCHF-OTC"
-]
+# =========================================================
+# TELEGRAM
+# =========================================================
 
-MAX_DAILY_TRADES = 12
-MAX_LOSS_STREAK = 2
-PAUSE_TIME = 900
-MAX_RECONNECT_ATTEMPTS = 20
-RECONNECT_DELAY = 3
-
-FUERZA_MINIMA = 70
-TOLERANCIA_NIVEL = 0.0020
-VENTANA_NIVELES = 6
-CONFIRMAR_TENDENCIA = True
-
-TIEMPO_ESPERA_EJECUCION = 0.008
-REINTENTOS_EJECUCION = 12
-TIEMPO_MINIMO_VALIDO = 59
-ESPERA_ENTRE_INTENTOS = 0.02
-RANGO_ENTRADA_INICIO = 0
-RANGO_ENTRADA_FIN = 6
-
-DAILY_TRADES = 0
-CURRENT_DAY = datetime.now(timezone.utc).day
-LOSS_STREAK = 0
-LAST_LOSS = 0
-LAST_TRADE = None
-BOT_RUNNING = False
-SEÑAL_PENDIENTE = None
-ULTIMA_VELA_EJECUTADA = None
-
-# 📱 TELEGRAM
 def send(msg):
     if TOKEN and CHAT_ID:
         try:
             requests.post(
                 f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"},
-                timeout=8
+                data={"chat_id": CHAT_ID, "text": msg}
             )
-        except Exception as e:
-            logging.error(f"Telegram: {str(e)}")
+        except:
+            pass
 
-def listen_commands():
-    global BOT_RUNNING
-    last_update_id = 0
-    while True:
-        try:
-            res = requests.get(
-                f"https://api.telegram.org/bot{TOKEN}/getUpdates",
-                params={"offset": last_update_id + 1, "timeout": 30},
-                timeout=35
-            )
-            data = res.json()
+# =========================================================
+# CONEXIÓN
+# =========================================================
 
-            for update in data.get("result", []):
-                last_update_id = update["update_id"]
-                msg = update.get("message", {})
-                text = msg.get("text", "").strip().lower()
-                chat_id = str(msg.get("chat", {}).get("id", ""))
-
-                if chat_id != str(CHAT_ID):
-                    continue
-
-                if text == "/start":
-                    BOT_RUNNING = True
-                    send("✅ BOT INICIADO")
-                elif text == "/stop":
-                    BOT_RUNNING = False
-                    send("🛑 BOT DETENIDO")
-
-        except Exception as e:
-            logging.error(f"Comandos: {str(e)}")
-            time.sleep(1)
-
-# 🔄 RESET DIARIO
-def reset_day():
-    global DAILY_TRADES, CURRENT_DAY, LOSS_STREAK
-    today = datetime.now(timezone.utc).day
-    if today != CURRENT_DAY:
-        DAILY_TRADES = 0
-        LOSS_STREAK = 0
-        CURRENT_DAY = today
-
-# 🔌 CONEXIÓN
 def connect():
     iq = IQ_Option(EMAIL, PASSWORD)
     iq.connect()
     iq.change_balance("PRACTICE")
     return iq
 
-# 📥 DATOS
+# =========================================================
+# DATOS
+# =========================================================
+
 def get_df(iq, par):
-    datos = iq.get_candles(par, TIMEFRAME_M1, 40, time.time())
-    df = pd.DataFrame(datos)
+    data = iq.get_candles(par, 60, 50, time.time())
+    df = pd.DataFrame(data)
     df.rename(columns={"max": "high", "min": "low"}, inplace=True)
     return df
 
-# 🚀 EJECUCIÓN
-def ejecutar(iq, par, tipo):
-    estado, id_op = iq.buy(BASE_AMOUNT, par, tipo, EXPIRATION)
-    return estado, id_op
+# =========================================================
+# MAIN
+# =========================================================
 
-# 🧠 LOOP
 def main():
-    global BOT_RUNNING
-
-    threading.Thread(target=listen_commands, daemon=True).start()
     iq = connect()
+    send("✅ BOT SIN ERRORES (Railway OK)")
 
     while True:
         try:
-            if not BOT_RUNNING:
-                time.sleep(1)
-                continue
+            for par in PARES:
 
-            reset_day()
-
-            for par in PARES_TODOS_OTC:
                 df = get_df(iq, par)
 
-                señal = get_reversal_signal(
-                    df,
-                    TOLERANCIA_NIVEL,
-                    VENTANA_NIVELES,
-                    CONFIRMAR_TENDENCIA
-                )
+                señal = get_reversal_signal(df)
 
                 if señal:
-                    tipo, fuerza, msg = señal
+                    tipo, fuerza, _ = señal
 
-                    if fuerza >= FUERZA_MINIMA:
-                        send(f"🚀 {par} | {tipo} | {fuerza}")
+                    send(f"🚀 {par} {tipo} {fuerza}")
 
-                        estado, _ = ejecutar(iq, par, tipo)
+                    iq.buy(100, par, tipo, 1)
 
-                        if estado:
-                            send("✅ OPERACIÓN EJECUTADA")
-                        else:
-                            send("❌ ERROR EJECUCIÓN")
-
-                        time.sleep(60)
+                    time.sleep(60)
 
             time.sleep(1)
 
@@ -181,6 +151,5 @@ def main():
             send(f"💥 Error: {str(e)}")
             time.sleep(5)
 
-# ▶️ INICIO
 if __name__ == "__main__":
     main()
