@@ -5,10 +5,6 @@ import pandas as pd
 from iqoptionapi.stable_api import IQ_Option
 from strategy import get_reversal_signal
 
-# ==============================
-# CONFIG
-# ==============================
-
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
 
@@ -20,10 +16,6 @@ PARES = ["EURUSD-OTC", "GBPUSD-OTC"]
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# ==============================
-# TELEGRAM
-# ==============================
-
 def send(msg):
     if TOKEN and CHAT_ID:
         try:
@@ -34,19 +26,11 @@ def send(msg):
         except:
             pass
 
-# ==============================
-# CONEXIÓN
-# ==============================
-
 def connect():
     iq = IQ_Option(EMAIL, PASSWORD)
     iq.connect()
     iq.change_balance("PRACTICE")
     return iq
-
-# ==============================
-# DATOS
-# ==============================
 
 def get_df(iq, par):
     data = iq.get_candles(par, 60, 50, time.time())
@@ -54,28 +38,15 @@ def get_df(iq, par):
     df.rename(columns={"max": "high", "min": "low"}, inplace=True)
     return df
 
-# ==============================
-# MONTO DINÁMICO
-# ==============================
-
 def calcular_monto(iq):
     balance = iq.get_balance()
     return round(balance * RIESGO, 2)
 
-# ==============================
-# 🔥 ENTRADA SNIPER
-# ==============================
-
 def esperar_confirmacion(iq, par, direccion):
-    """
-    Espera micro movimiento del precio en la dirección correcta
-    """
-
     precio_inicial = iq.get_candles(par, 1, 1, time.time())[0]["close"]
 
-    for _ in range(10):  # ~0.5 segundos
+    for _ in range(10):
         time.sleep(0.05)
-
         precio_actual = iq.get_candles(par, 1, 1, time.time())[0]["close"]
 
         if direccion == "call" and precio_actual > precio_inicial:
@@ -86,13 +57,9 @@ def esperar_confirmacion(iq, par, direccion):
 
     return False
 
-# ==============================
-# MAIN
-# ==============================
-
 def main():
     iq = connect()
-    send("🎯 BOT SNIPER ACTIVADO")
+    send("🎯 BOT SNIPER INVERTIDO ACTIVADO")
 
     ultima_vela = None
 
@@ -101,11 +68,10 @@ def main():
             tiempo = iq.get_server_timestamp()
             vela = int(tiempo // 60)
 
-            # 🔥 SOLO EN APERTURA REAL
             if vela != ultima_vela:
                 ultima_vela = vela
 
-                time.sleep(0.15)  # micro delay real
+                time.sleep(0.15)
 
                 for par in PARES:
 
@@ -115,7 +81,6 @@ def main():
                     if señal:
                         tipo, fuerza, motivo = señal
 
-                        # 🔥 CONFIRMACIÓN SNIPER
                         confirmado = esperar_confirmacion(iq, par, tipo)
 
                         if not confirmado:
@@ -123,7 +88,7 @@ def main():
 
                         monto = calcular_monto(iq)
 
-                        send(f"""🎯 SNIPER ENTRY
+                        send(f"""🎯 SNIPER INVERTIDO
 Par: {par}
 Tipo: {tipo}
 Fuerza: {fuerza}
