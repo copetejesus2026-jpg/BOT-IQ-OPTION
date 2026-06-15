@@ -3,13 +3,9 @@ import os
 import requests
 import pandas as pd
 import logging
-import threading
-from datetime import datetime, timezone
-
-# 👇 IMPORT CORRECTO (MISMA CARPETA)
-from strategy import get_reversal_signal
-
 from iqoptionapi.stable_api import IQ_Option
+
+from strategy import get_reversal_signal
 
 # ==============================
 # CONFIG LOGS
@@ -26,17 +22,18 @@ BASE_AMOUNT = 600
 EXPIRATION = 1
 TIMEFRAME = 60
 
-# SNIPER ENTRY (APERTURA)
+# ENTRADA SNIPER (APERTURA)
 ENTRY_START = 0
 ENTRY_END = 2
 
-# FILTRO FUERZA
 MIN_FORCE = 98
 
-# PARES
 PARES = [
-    "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC",
-    "EURJPY-OTC", "GBPJPY-OTC"
+    "EURUSD-OTC",
+    "GBPUSD-OTC",
+    "USDJPY-OTC",
+    "EURJPY-OTC",
+    "GBPJPY-OTC"
 ]
 
 # ==============================
@@ -74,29 +71,6 @@ def get_df(par):
     }, inplace=True)
 
     return df
-
-# ==============================
-# DETECTAR MODO AUTOMÁTICO
-# ==============================
-def detectar_modo(df):
-    """
-    Decide si operar NORMAL o INVERTIDO
-    """
-
-    ultimas = df.tail(6)
-
-    tendencia_alcista = ultimas["close"].iloc[-1] > ultimas["close"].iloc[0]
-    rango = abs(ultimas["close"].iloc[-1] - ultimas["close"].iloc[0])
-
-    # 🔴 Poco movimiento = rango = invertir
-    if rango < 0.0003:
-        return "invertido"
-
-    # 🔴 Tendencia fuerte = evitar seguir = invertir
-    if tendencia_alcista or not tendencia_alcista:
-        return "invertido"
-
-    return "normal"
 
 # ==============================
 # EJECUTAR OPERACIÓN
@@ -138,14 +112,14 @@ def run():
                         direccion, fuerza, tipo = resultado
 
                         if fuerza >= MIN_FORCE:
-                            mejor = (par, direccion, fuerza, tipo, df)
+                            mejor = (par, direccion, fuerza, tipo)
 
                 if mejor:
                     SEÑAL = mejor
                     print(f"🔍 Señal detectada {mejor}")
 
             # =========================
-            # EJECUTAR SNIPER
+            # EJECUTAR SNIPER INVERTIDO
             # =========================
             if (
                 SEÑAL
@@ -154,16 +128,13 @@ def run():
             ):
                 ULTIMA_VELA = vela
 
-                par, direccion, fuerza, tipo, df = SEÑAL
+                par, direccion, fuerza, tipo = SEÑAL
                 SEÑAL = None
 
-                modo = detectar_modo(df)
+                # 🔁 INVERTIR SIEMPRE
+                direccion = "put" if direccion == "call" else "call"
 
-                # 🔁 INVERTIR SI ES NECESARIO
-                if modo == "invertido":
-                    direccion = "put" if direccion == "call" else "call"
-
-                print(f"🚀 Entrada SNIPER | {par} | {direccion} | modo: {modo}")
+                print(f"🚀 SNIPER INVERTIDO | {par} | {direccion} | Fuerza: {fuerza}")
 
                 ejecutar(par, direccion)
 
@@ -173,7 +144,6 @@ def run():
             print(f"💥 Error: {e}")
             time.sleep(2)
             connect()
-
 
 # ==============================
 # START
