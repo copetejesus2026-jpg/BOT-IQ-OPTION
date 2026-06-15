@@ -2,107 +2,184 @@ import time
 import os
 import requests
 import pandas as pd
-from iqoptionapi.stable_api import IQ_Option
+import logging
+import threading
+from datetime import datetime, timezone
+
+# 👇 IMPORT CORRECTO (MISMA CARPETA)
 from strategy import get_reversal_signal
 
+from iqoptionapi.stable_api import IQ_Option
+
+# ==============================
+# CONFIG LOGS
+# ==============================
+logging.basicConfig(level=logging.INFO)
+
+# ==============================
+# CONFIGURACIÓN
+# ==============================
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
 
-RIESGO = 0.02
-EXPIRACION = 1
+BASE_AMOUNT = 600
+EXPIRATION = 1
+TIMEFRAME = 60
 
-PARES = ["EURUSD-OTC", "GBPUSD-OTC"]
+# SNIPER ENTRY (APERTURA)
+ENTRY_START = 0
+ENTRY_END = 2
 
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# FILTRO FUERZA
+MIN_FORCE = 98
 
-def send(msg):
-    if TOKEN and CHAT_ID:
-        try:
-            requests.post(
-                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                data={"chat_id": CHAT_ID, "text": msg}
-            )
-        except:
-            pass
+# PARES
+PARES = [
+    "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC",
+    "EURJPY-OTC", "GBPJPY-OTC"
+]
 
+# ==============================
+# VARIABLES
+# ==============================
+iq = None
+SEÑAL = None
+ULTIMA_VELA = None
+
+# ==============================
+# CONEXIÓN
+# ==============================
 def connect():
+    global iq
     iq = IQ_Option(EMAIL, PASSWORD)
     iq.connect()
-    iq.change_balance("PRACTICE")
-    return iq
 
-def get_df(iq, par):
-    data = iq.get_candles(par, 60, 50, time.time())
-    df = pd.DataFrame(data)
-    df.rename(columns={"max": "high", "min": "low"}, inplace=True)
+    if iq.check_connect():
+        iq.change_balance("PRACTICE")
+        print("✅ Conectado correctamente")
+    else:
+        print("❌ Error conexión")
+        exit()
+
+# ==============================
+# DATAFRAME
+# ==============================
+def get_df(par):
+    candles = iq.get_candles(par, TIMEFRAME, 50, time.time())
+    df = pd.DataFrame(candles)
+
+    df.rename(columns={
+        "max": "high",
+        "min": "low"
+    }, inplace=True)
+
     return df
 
-def calcular_monto(iq):
-    balance = iq.get_balance()
-    return round(balance * RIESGO, 2)
+# ==============================
+# DETECTAR MODO AUTOMÁTICO
+# ==============================
+def detectar_modo(df):
+    """
+    Decide si operar NORMAL o INVERTIDO
+    """
 
-def esperar_confirmacion(iq, par, direccion):
-    precio_inicial = iq.get_candles(par, 1, 1, time.time())[0]["close"]
+    ultimas = df.tail(6)
 
-    for _ in range(10):
-        time.sleep(0.05)
-        precio_actual = iq.get_candles(par, 1, 1, time.time())[0]["close"]
+    tendencia_alcista = ultimas["close"].iloc[-1] > ultimas["close"].iloc[0]
+    rango = abs(ultimas["close"].iloc[-1] - ultimas["close"].iloc[0])
 
-        if direccion == "call" and precio_actual > precio_inicial:
-            return True
+    # 🔴 Poco movimiento = rango = invertir
+    if rango < 0.0003:
+        return "invertido"
 
-        if direccion == "put" and precio_actual < precio_inicial:
-            return True
+    # 🔴 Tendencia fuerte = evitar seguir = invertir
+    if tendencia_alcista or not tendencia_alcista:
+        return "invertido"
 
-    return False
+    return "normal"
 
-def main():
-    iq = connect()
-    send("🎯 BOT SNIPER INVERTIDO ACTIVADO")
+# ==============================
+# EJECUTAR OPERACIÓN
+# ==============================
+def ejecutar(par, direccion):
+    estado, id_op = iq.buy(BASE_AMOUNT, par, direccion, EXPIRATION)
 
-    ultima_vela = None
+    if estado:
+        print(f"✅ OPERACIÓN: {direccion.upper()} {par}")
+    else:
+        print("❌ Error ejecución")
+
+# ==============================
+# LOOP PRINCIPAL
+# ==============================
+def run():
+    global SEÑAL, ULTIMA_VELA
+
+    connect()
 
     while True:
         try:
-            tiempo = iq.get_server_timestamp()
-            vela = int(tiempo // 60)
+            server_time = iq.get_server_timestamp()
+            segundos = server_time % 60
+            vela = int(server_time // 60)
 
-            if vela != ultima_vela:
-                ultima_vela = vela
-
-                time.sleep(0.15)
+            # =========================
+            # BUSCAR SEÑALES
+            # =========================
+            if 55 <= segundos <= 58:
+                mejor = None
 
                 for par in PARES:
+                    df = get_df(par)
 
-                    df = get_df(iq, par)
-                    señal = get_reversal_signal(df)
+                    resultado = get_reversal_signal(df)
 
-                    if señal:
-                        tipo, fuerza, motivo = señal
+                    if resultado:
+                        direccion, fuerza, tipo = resultado
 
-                        confirmado = esperar_confirmacion(iq, par, tipo)
+                        if fuerza >= MIN_FORCE:
+                            mejor = (par, direccion, fuerza, tipo, df)
 
-                        if not confirmado:
-                            continue
+                if mejor:
+                    SEÑAL = mejor
+                    print(f"🔍 Señal detectada {mejor}")
 
-                        monto = calcular_monto(iq)
+            # =========================
+            # EJECUTAR SNIPER
+            # =========================
+            if (
+                SEÑAL
+                and ENTRY_START <= segundos <= ENTRY_END
+                and vela != ULTIMA_VELA
+            ):
+                ULTIMA_VELA = vela
 
-                        send(f"""🎯 SNIPER INVERTIDO
-Par: {par}
-Tipo: {tipo}
-Fuerza: {fuerza}
-Monto: ${monto}""")
+                par, direccion, fuerza, tipo, df = SEÑAL
+                SEÑAL = None
 
-                        iq.buy(monto, par, tipo, EXPIRACION)
+                modo = detectar_modo(df)
 
-                        time.sleep(60)
+                # 🔁 INVERTIR SI ES NECESARIO
+                if modo == "invertido":
+                    direccion = "put" if direccion == "call" else "call"
 
-            time.sleep(0.3)
+                print(f"🚀 Entrada SNIPER | {par} | {direccion} | modo: {modo}")
+
+                ejecutar(par, direccion)
+
+            time.sleep(0.2)
 
         except Exception as e:
-            send(f"💥 Error: {str(e)}")
-            time.sleep(5)
+            print(f"💥 Error: {e}")
+            time.sleep(2)
+            connect()
 
+
+# ==============================
+# START
+# ==============================
 if __name__ == "__main__":
-    main()
+    if not EMAIL or not PASSWORD:
+        print("❌ Faltan credenciales")
+    else:
+        run()
