@@ -1,4 +1,9 @@
 import numpy as np
+import pandas as pd
+
+# =========================
+# FUNCIONES BÁSICAS
+# =========================
 
 def body(c):
     return abs(c["close"] - c["open"])
@@ -6,22 +11,46 @@ def body(c):
 def range_c(c):
     return c["high"] - c["low"]
 
-def upper_wick(c):
-    return c["high"] - max(c["open"], c["close"])
+def bullish(c):
+    return c["close"] > c["open"]
 
-def lower_wick(c):
-    return min(c["open"], c["close"]) - c["low"]
+def bearish(c):
+    return c["close"] < c["open"]
+
+# =========================
+# SOPORTE / RESISTENCIA
+# =========================
+
+def detectar_soportes(df, ventana=5):
+    niveles = []
+    for i in range(ventana, len(df)-ventana):
+        minimo = df['low'].iloc[i-ventana:i+ventana+1].min()
+        if abs(df['low'].iloc[i] - minimo) / minimo <= 0.002:
+            niveles.append(minimo)
+    return niveles
+
+def detectar_resistencias(df, ventana=5):
+    niveles = []
+    for i in range(ventana, len(df)-ventana):
+        maximo = df['high'].iloc[i-ventana:i+ventana+1].max()
+        if abs(df['high'].iloc[i] - maximo) / maximo <= 0.002:
+            niveles.append(maximo)
+    return niveles
+
+# =========================
+# ESTRATEGIA INTELIGENTE
+# =========================
 
 def get_reversal_signal(df):
 
-    if len(df) < 50:
+    if len(df) < 40:
         return None
 
     df = df.copy()
 
     # EMAs
     df['ema5'] = df['close'].ewm(span=5).mean()
-    df['ema8'] = df['close'].ewm(span=8).mean()
+    df['ema13'] = df['close'].ewm(span=13).mean()
     df['ema21'] = df['close'].ewm(span=21).mean()
 
     # RSI
@@ -29,47 +58,49 @@ def get_reversal_signal(df):
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
 
-    avg_gain = gain.rolling(6).mean()
-    avg_loss = loss.rolling(6).mean().replace(0, 0.001)
-
-    rs = avg_gain / avg_loss
+    rs = gain.rolling(5).mean() / (loss.rolling(5).mean() + 0.0001)
     df['rsi'] = 100 - (100 / (1 + rs))
 
+    # Última vela
     c1 = df.iloc[-1]
     c2 = df.iloc[-2]
 
-    fuerza = body(c1) / (range_c(c1) + 1e-6)
-
-    # 🔥 SOLO VELAS FUERTES
-    if fuerza < 0.8:
-        return None
-
-    # ❌ evitar manipulación
-    if upper_wick(c1) > body(c1) or lower_wick(c1) > body(c1):
-        return None
-
-    # ❌ evitar rango
-    rango = abs(df["close"].iloc[-6] - df["close"].iloc[-1])
-    if rango < 0.0005:
-        return None
-
+    cierre = c1["close"]
     rsi = c1["rsi"]
 
-    # ❌ agotamiento
-    if rsi > 70 or rsi < 30:
+    # Tendencia
+    tendencia_alcista = c1["ema5"] > c1["ema13"] > c1["ema21"]
+    tendencia_bajista = c1["ema5"] < c1["ema13"] < c1["ema21"]
+
+    # Fuerza vela (modo sniper)
+    fuerza = body(c1) / range_c(c1)
+
+    if fuerza < 0.98:
         return None
 
-    tendencia_alcista = df['ema5'].iloc[-1] > df['ema8'].iloc[-1] > df['ema21'].iloc[-1]
-    tendencia_bajista = df['ema5'].iloc[-1] < df['ema8'].iloc[-1] < df['ema21'].iloc[-1]
+    # Soportes / Resistencias
+    soportes = detectar_soportes(df)
+    resistencias = detectar_resistencias(df)
 
-    # 🔁 INVERTIDO
+    en_soporte = any(abs(cierre - s)/s < 0.002 for s in soportes)
+    en_resistencia = any(abs(cierre - r)/r < 0.002 for r in resistencias)
 
-    # ERA CALL → AHORA PUT
-    if tendencia_alcista and c1["close"] > c2["close"]:
-        return ("put", 98, "SNIPER CONTRA TENDENCIA")
+    # =========================
+    # DECISIÓN AUTOMÁTICA
+    # =========================
 
-    # ERA PUT → AHORA CALL
-    if tendencia_bajista and c1["close"] < c2["close"]:
-        return ("call", 98, "SNIPER CONTRA TENDENCIA")
+    # 🔄 MODO INVERTIDO (REVERSIÓN)
+    if en_resistencia and rsi > 65 and bullish(c1):
+        return ("put", 100, "REVERSIÓN AUTOMÁTICA")
+
+    if en_soporte and rsi < 35 and bearish(c1):
+        return ("call", 100, "REVERSIÓN AUTOMÁTICA")
+
+    # ✅ MODO NORMAL (TENDENCIA)
+    if tendencia_alcista and bullish(c1) and not en_resistencia:
+        return ("call", 98, "TENDENCIA LIMPIA")
+
+    if tendencia_bajista and bearish(c1) and not en_soporte:
+        return ("put", 98, "TENDENCIA LIMPIA")
 
     return None
