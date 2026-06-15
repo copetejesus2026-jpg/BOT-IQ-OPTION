@@ -1,9 +1,4 @@
 import numpy as np
-import pandas as pd
-
-# =========================================================
-# FUNCIONES AUXILIARES
-# =========================================================
 
 def body(c):
     return abs(c["close"] - c["open"])
@@ -11,66 +6,20 @@ def body(c):
 def range_c(c):
     return c["high"] - c["low"]
 
-def bullish(c):
-    return c["close"] > c["open"]
+def upper_wick(c):
+    return c["high"] - max(c["open"], c["close"])
 
-def bearish(c):
-    return c["close"] < c["open"]
-
-# =========================================================
-# SOPORTES
-# =========================================================
-
-def detectar_soportes(datos, ventana=5):
-    soportes = []
-
-    for i in range(ventana, len(datos) - ventana):
-        minimo = datos['low'].iloc[i-ventana:i+ventana+1].min()
-
-        if abs(datos['low'].iloc[i] - minimo) / minimo <= 0.0018:
-            soportes.append(round(minimo, 5))
-
-    return sorted(list(set(soportes)))
-
-# =========================================================
-# RESISTENCIAS
-# =========================================================
-
-def detectar_resistencias(datos, ventana=5):
-    resistencias = []
-
-    for i in range(ventana, len(datos) - ventana):
-        maximo = datos['high'].iloc[i-ventana:i+ventana+1].max()
-
-        if abs(datos['high'].iloc[i] - maximo) / maximo <= 0.0018:
-            resistencias.append(round(maximo, 5))
-
-    return sorted(list(set(resistencias)))
-
-# =========================================================
-# COMPRESIÓN
-# =========================================================
-
-def detectar_compresion(df):
-    ultimas = df.iloc[-5:]
-
-    promedio_rango = ultimas.apply(lambda x: range_c(x), axis=1).mean()
-    rango_actual = range_c(df.iloc[-1])
-
-    return rango_actual < promedio_rango * 0.8
-
-# =========================================================
-# ESTRATEGIA PRINCIPAL
-# =========================================================
+def lower_wick(c):
+    return min(c["open"], c["close"]) - c["low"]
 
 def get_reversal_signal(df):
 
-    if len(df) < 40:
+    if len(df) < 50:
         return None
 
     df = df.copy()
 
-    # EMAS
+    # EMAs
     df['ema5'] = df['close'].ewm(span=5).mean()
     df['ema8'] = df['close'].ewm(span=8).mean()
     df['ema21'] = df['close'].ewm(span=21).mean()
@@ -80,49 +29,49 @@ def get_reversal_signal(df):
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
 
-    avg_gain = gain.rolling(5).mean()
-    avg_loss = loss.rolling(5).mean().replace(0, 0.001)
+    avg_gain = gain.rolling(6).mean()
+    avg_loss = loss.rolling(6).mean().replace(0, 0.001)
 
     rs = avg_gain / avg_loss
     df['rsi'] = 100 - (100 / (1 + rs))
 
-    # MACD
-    df['macd'] = df['ema8'] - df['ema21']
-    df['signal'] = df['macd'].ewm(span=4).mean()
-
-    # VOLUMEN
-    df['vol_media'] = df['volume'].rolling(5).mean()
-
     c1 = df.iloc[-1]
     c2 = df.iloc[-2]
 
-    cierre = c1["close"]
+    fuerza = body(c1) / (range_c(c1) + 1e-6)
 
-    # CONDICIONES
-    alcista = bullish(c1)
-    bajista = bearish(c1)
+    # 🔥 SOLO VELAS EXTREMAS
+    if fuerza < 0.8:
+        return None
 
-    momentum_alcista = alcista and c1["close"] > c2["close"]
-    momentum_bajista = bajista and c1["close"] < c2["close"]
+    # ❌ Evitar manipulación (mechas grandes)
+    if upper_wick(c1) > body(c1) or lower_wick(c1) > body(c1):
+        return None
 
-    fuerza_alcista = alcista and body(c1) > range_c(c1) * 0.5
-    fuerza_bajista = bajista and body(c1) > range_c(c1) * 0.5
+    # ❌ Evitar rango lateral
+    rango = abs(df["close"].iloc[-6] - df["close"].iloc[-1])
+    if rango < 0.0005:
+        return None
 
-    # SCORES
-    call_score = 0
-    put_score = 0
+    rsi = c1["rsi"]
 
-    if c1["macd"] >= c1["signal"] and momentum_alcista and fuerza_alcista:
-        call_score += 60
+    tendencia_alcista = df['ema5'].iloc[-1] > df['ema8'].iloc[-1] > df['ema21'].iloc[-1]
+    tendencia_bajista = df['ema5'].iloc[-1] < df['ema8'].iloc[-1] < df['ema21'].iloc[-1]
 
-    if c1["macd"] <= c1["signal"] and momentum_bajista and fuerza_bajista:
-        put_score += 60
+    # ❌ agotamiento
+    if rsi > 70 or rsi < 30:
+        return None
 
-    # 🔥 INVERSIÓN FINAL
-    if call_score >= 60:
-        return ("put", call_score, "Invertido")
+    # ❌ vela contra tendencia previa fuerte
+    if body(c2) > body(c1) * 1.2:
+        return None
 
-    if put_score >= 60:
-        return ("call", put_score, "Invertido")
+    # CALL
+    if tendencia_alcista and c1["close"] > c2["close"]:
+        return ("call", 98, "PRO TREND")
+
+    # PUT
+    if tendencia_bajista and c1["close"] < c2["close"]:
+        return ("put", 98, "PRO TREND")
 
     return None
