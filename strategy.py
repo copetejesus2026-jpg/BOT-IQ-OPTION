@@ -1,3 +1,72 @@
+import numpy as np
+import pandas as pd
+
+# =========================================================
+# FUNCIONES AUXILIARES
+# =========================================================
+
+def body(c):
+    return abs(c["close"] - c["open"])
+
+def range_c(c):
+    return c["high"] - c["low"]
+
+def bullish(c):
+    return c["close"] > c["open"]
+
+def bearish(c):
+    return c["close"] < c["open"]
+
+# =========================================================
+# SOPORTES
+# =========================================================
+
+def detectar_soportes(datos, ventana=5):
+    soportes = []
+
+    for i in range(ventana, len(datos) - ventana):
+        minimo = datos['low'].iloc[i-ventana:i+ventana+1].min()
+
+        if abs(datos['low'].iloc[i] - minimo) / minimo <= 0.0018:
+            soportes.append(round(minimo, 5))
+
+    return sorted(list(set(soportes)))
+
+# =========================================================
+# RESISTENCIAS
+# =========================================================
+
+def detectar_resistencias(datos, ventana=5):
+    resistencias = []
+
+    for i in range(ventana, len(datos) - ventana):
+        maximo = datos['high'].iloc[i-ventana:i+ventana+1].max()
+
+        if abs(datos['high'].iloc[i] - maximo) / maximo <= 0.0018:
+            resistencias.append(round(maximo, 5))
+
+    return sorted(list(set(resistencias)))
+
+# =========================================================
+# COMPRESIÓN
+# =========================================================
+
+def detectar_compresion(df):
+    ultimas = df.iloc[-5:]
+
+    promedio_rango = ultimas.apply(
+        lambda x: range_c(x),
+        axis=1
+    ).mean()
+
+    rango_actual = range_c(df.iloc[-1])
+
+    return rango_actual < promedio_rango * 0.8
+
+# =========================================================
+# ESTRATEGIA PRINCIPAL
+# =========================================================
+
 def get_reversal_signal(
     df,
     tolerancia_nivel=0.0025,
@@ -5,6 +74,7 @@ def get_reversal_signal(
     confirmar_tendencia=True
 ):
 
+    # VALIDACIÓN
     if len(df) < 40:
         return None
 
@@ -39,6 +109,7 @@ def get_reversal_signal(
     soportes = detectar_soportes(df, ventana_niveles)
     resistencias = detectar_resistencias(df, ventana_niveles)
 
+    # ================= DATOS RECIENTES =================
     try:
         c1 = df.iloc[-1]
         c2 = df.iloc[-2]
@@ -51,7 +122,6 @@ def get_reversal_signal(
         signal_macd = float(c1["signal_macd"])
         volumen = float(c1["volume"])
         vol_media = float(c1["vol_media"])
-
     except:
         return None
 
@@ -68,6 +138,7 @@ def get_reversal_signal(
 
     compresion = detectar_compresion(df)
 
+    # FILTRO RANGO
     rango = abs(df["close"].iloc[-6] - cierre) / cierre
     if rango < 0.0006:
         return None
@@ -106,20 +177,19 @@ def get_reversal_signal(
             put_score += 5
 
     # ================= INVERSIÓN FINAL =================
-    # 🔥 AQUÍ ESTÁ EL CAMBIO IMPORTANTE
 
     if call_score >= 65:
         return (
-            "put",  # ← invertido
+            "put",
             min(call_score, 100),
-            "PUT (invertido de CALL)"
+            "PUT (invertido)"
         )
 
     if put_score >= 65:
         return (
-            "call",  # ← invertido
+            "call",
             min(put_score, 100),
-            "CALL (invertido de PUT)"
+            "CALL (invertido)"
         )
 
     return None
