@@ -68,22 +68,12 @@ PARES_TODOS_OTC = [
 # =========================================================
 
 MAX_DAILY_TRADES = 35
+
 MAX_LOSS_STREAK = 5
+
 PAUSE_TIME = 900
 
 FUERZA_MINIMA = 90
-
-# =========================================================
-# TIEMPOS
-# =========================================================
-
-# Detectar antes del cierre
-SEGUNDO_ANALISIS_INICIO = 55.0
-SEGUNDO_ANALISIS_FIN = 56.0
-
-# Ejecutar apenas abre nueva vela
-SEGUNDO_ENTRADA_MIN = 0.15
-SEGUNDO_ENTRADA_MAX = 0.45
 
 # =========================================================
 # VARIABLES
@@ -94,15 +84,12 @@ DAILY_TRADES = 0
 CURRENT_DAY = datetime.now(timezone.utc).day
 
 LOSS_STREAK = 0
+
 LAST_LOSS = 0
 
 BOT_RUNNING = False
 
-SEÑAL_PENDIENTE = None
-
-ULTIMA_VELA_OPERADA = None
-
-VELA_ANALIZADA = None
+ULTIMA_VELA_ANALIZADA = None
 
 # =========================================================
 # TELEGRAM
@@ -129,7 +116,7 @@ def send(msg):
             logging.error(str(e))
 
 # =========================================================
-# COMANDOS TELEGRAM
+# COMANDOS
 # =========================================================
 
 def listen_commands():
@@ -172,8 +159,8 @@ def listen_commands():
 
                     send(
                         "✅ <b>BOT ACTIVADO</b>\n"
-                        "🎯 SOLO ENTRADAS 90+\n"
-                        "⚡ Entrada ultra precisa"
+                        "⚡ MODO QUANT\n"
+                        "🎯 Entrada inmediata"
                     )
 
                 elif text == "/stop":
@@ -210,7 +197,7 @@ def connect():
 
                 send(
                     f"✅ <b>CONECTADO</b>\n"
-                    f"💰 Balance: ${balance:.2f}"
+                    f"💰 ${balance:.2f}"
                 )
 
                 return iq
@@ -222,7 +209,7 @@ def connect():
         time.sleep(2)
 
 # =========================================================
-# OBTENER DATOS
+# DATAFRAME
 # =========================================================
 
 def get_df(iq, par):
@@ -266,7 +253,7 @@ def get_df(iq, par):
         return None
 
 # =========================================================
-# EJECUTAR OPERACIÓN
+# EJECUTAR
 # =========================================================
 
 def ejecutar_operacion(iq, monto, par, direccion):
@@ -304,6 +291,13 @@ def verificar_resultado(iq, order_id):
         if resultado is None:
             return
 
+        # Corregir tuple
+        if isinstance(resultado, tuple):
+
+            resultado = resultado[0]
+
+        resultado = float(resultado)
+
         if resultado > 0:
 
             LOSS_STREAK = 0
@@ -322,7 +316,7 @@ def verificar_resultado(iq, order_id):
             send(
                 f"❌ <b>LOSS</b>\n"
                 f"💸 -${abs(resultado):.2f}\n"
-                f"📉 Racha: {LOSS_STREAK}"
+                f"📉 Racha: {LOSS_STREAK}/{MAX_LOSS_STREAK}"
             )
 
     except Exception as e:
@@ -337,9 +331,9 @@ def main():
 
     global BOT_RUNNING
     global DAILY_TRADES
-    global SEÑAL_PENDIENTE
-    global ULTIMA_VELA_OPERADA
-    global VELA_ANALIZADA
+    global LOSS_STREAK
+    global LAST_LOSS
+    global ULTIMA_VELA_ANALIZADA
 
     threading.Thread(
         target=listen_commands,
@@ -360,9 +354,37 @@ def main():
 
                 continue
 
+            # =============================================
+            # RECONEXIÓN
+            # =============================================
+
             if not iq.check_connect():
 
                 iq = connect()
+
+            # =============================================
+            # PAUSA POR RACHA
+            # =============================================
+
+            if LOSS_STREAK >= MAX_LOSS_STREAK:
+
+                restante = int(
+                    PAUSE_TIME - (time.time() - LAST_LOSS)
+                )
+
+                if restante > 0:
+
+                    time.sleep(5)
+
+                    continue
+
+                else:
+
+                    LOSS_STREAK = 0
+
+            # =============================================
+            # TIEMPO SERVIDOR
+            # =============================================
 
             server_time = iq.get_server_timestamp()
 
@@ -370,124 +392,96 @@ def main():
 
             vela_actual = int(server_time // 60)
 
-            # =================================================
-            # ANALIZAR
-            # =================================================
+            # =============================================
+            # ANALIZAR SOLO 1 VEZ POR VELA
+            # =============================================
 
-            if (
-                SEGUNDO_ANALISIS_INICIO <= segundos <= SEGUNDO_ANALISIS_FIN
-            ):
+            if ULTIMA_VELA_ANALIZADA == vela_actual:
 
-                if VELA_ANALIZADA == vela_actual:
-                    time.sleep(0.05)
+                time.sleep(0.005)
+
+                continue
+
+            ULTIMA_VELA_ANALIZADA = vela_actual
+
+            mejor = None
+
+            mayor_fuerza = 0
+
+            # =============================================
+            # BUSCAR MEJOR SEÑAL
+            # =============================================
+
+            for par in PARES_TODOS_OTC:
+
+                df = get_df(iq, par)
+
+                if df is None:
                     continue
 
-                VELA_ANALIZADA = vela_actual
+                resultado = get_reversal_signal(df)
 
-                mejor = None
-                mejor_fuerza = 0
+                if resultado is None:
+                    continue
 
-                for par in PARES_TODOS_OTC:
+                direccion, fuerza, tipo = resultado
 
-                    df = get_df(iq, par)
+                if fuerza >= FUERZA_MINIMA:
 
-                    if df is None:
-                        continue
+                    if fuerza > mayor_fuerza:
 
-                    resultado = get_reversal_signal(df)
+                        mayor_fuerza = fuerza
 
-                    if resultado is None:
-                        continue
-
-                    direccion, fuerza, tipo = resultado
-
-                    if fuerza >= FUERZA_MINIMA:
-
-                        if fuerza > mejor_fuerza:
-
-                            mejor_fuerza = fuerza
-
-                            mejor = (
-                                par,
-                                direccion,
-                                fuerza,
-                                tipo,
-                                vela_actual
-                            )
-
-                if mejor is not None:
-
-                    SEÑAL_PENDIENTE = mejor
-
-                    par, direccion, fuerza, tipo, _ = mejor
-
-                    send(
-                        f"🔍 <b>SEÑAL DETECTADA</b>\n"
-                        f"💹 {par}\n"
-                        f"📈 {direccion.upper()}\n"
-                        f"💪 Fuerza: {fuerza}/100\n"
-                        f"📍 {tipo}"
-                    )
-
-            # =================================================
-            # EJECUTAR
-            # =================================================
-
-            if SEÑAL_PENDIENTE is not None:
-
-                par, direccion, fuerza, tipo, vela_senal = SEÑAL_PENDIENTE
-
-                nuevo_server_time = iq.get_server_timestamp()
-
-                nuevo_segundo = nuevo_server_time % 60
-
-                nueva_vela = int(nuevo_server_time // 60)
-
-                # SOLO SI CAMBIÓ LA VELA
-                if (
-                    nueva_vela > vela_senal
-                    and ULTIMA_VELA_OPERADA != nueva_vela
-                    and SEGUNDO_ENTRADA_MIN <= nuevo_segundo <= SEGUNDO_ENTRADA_MAX
-                ):
-
-                    ULTIMA_VELA_OPERADA = nueva_vela
-
-                    SEÑAL_PENDIENTE = None
-
-                    send(
-                        f"🚀 <b>EJECUTANDO</b>\n"
-                        f"💹 {par}\n"
-                        f"📈 {direccion.upper()}\n"
-                        f"💪 {fuerza}/100\n"
-                        f"⏱️ {nuevo_segundo:.2f}s"
-                    )
-
-                    estado, order_id = ejecutar_operacion(
-                        iq,
-                        BASE_AMOUNT,
-                        par,
-                        direccion
-                    )
-
-                    if estado:
-
-                        DAILY_TRADES += 1
-
-                        send(
-                            f"✅ <b>OPERACIÓN ABIERTA</b>\n"
-                            f"💰 ${BASE_AMOUNT}\n"
-                            f"📊 Total: {DAILY_TRADES}/{MAX_DAILY_TRADES}"
+                        mejor = (
+                            par,
+                            direccion,
+                            fuerza,
+                            tipo
                         )
 
-                        threading.Thread(
-                            target=verificar_resultado,
-                            args=(iq, order_id),
-                            daemon=True
-                        ).start()
+            # =============================================
+            # EJECUTAR INMEDIATAMENTE
+            # =============================================
 
-                    else:
+            if mejor is not None:
 
-                        send("❌ Error ejecución")
+                par, direccion, fuerza, tipo = mejor
+
+                send(
+                    f"🚀 <b>ENTRADA INMEDIATA</b>\n"
+                    f"💹 {par}\n"
+                    f"📈 {direccion.upper()}\n"
+                    f"💪 Fuerza: {fuerza}/100\n"
+                    f"⏱️ {segundos:.2f}s\n"
+                    f"📍 {tipo}"
+                )
+
+                estado, order_id = ejecutar_operacion(
+                    iq,
+                    BASE_AMOUNT,
+                    par,
+                    direccion
+                )
+
+                if estado:
+
+                    DAILY_TRADES += 1
+
+                    send(
+                        f"✅ <b>OPERACIÓN ABIERTA</b>\n"
+                        f"💰 ${BASE_AMOUNT}\n"
+                        f"📊 {DAILY_TRADES}/{MAX_DAILY_TRADES}"
+                    )
+
+                    threading.Thread(
+                        target=verificar_resultado,
+                        args=(iq, order_id),
+                        daemon=True
+                    ).start()
+
+                else:
+
+                    send("❌ Error ejecución")
 
             time.sleep(0.005)
 
