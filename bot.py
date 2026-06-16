@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO)
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
 
-BASE_AMOUNT = 600
+BASE_AMOUNT = 1200
 EXPIRATION = 1
 TIMEFRAME = 60
 
@@ -30,7 +30,7 @@ MIN_FORCE = 98
 
 PARES = [
     "EURUSD-OTC",
-    "GBPUSD-OTC",
+    "AUDCAD-OTC",
     "USDJPY-OTC",
     "EURJPY-OTC",
     "GBPJPY-OTC"
